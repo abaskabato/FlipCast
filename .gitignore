@@ -1,6 +1,6 @@
 .vercel
 node_modules
 .env
-.env*.local
+.env*
 .DS_Store
 better-auth-ui
