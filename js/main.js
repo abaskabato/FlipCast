@@ -97,7 +97,9 @@ let grabbed = false;
 
 // ---------- stick / lock phone position ----------
 let stuck = false;
-const PIN_TARGET = new THREE.Vector3(0, -0.05, 0); // matches the default framing
+// world-Y the camera looks at; updated by the responsive framing below so the
+// pin / search views stay consistent with whatever the resize logic chose.
+let frameTargetY = -0.05;
 let savedCamPos = null;
 let savedTarget = null;
 let savedPhoneRotY = 0;
@@ -116,8 +118,8 @@ stickBtn?.addEventListener('click', () => {
         // including the SEND/END keys — stays clear of the on-screen controls
         // on every device instead of being covered by them.
         const dist = camera.position.distanceTo(controls.target);
-        controls.target.copy(PIN_TARGET);
-        camera.position.set(0, PIN_TARGET.y + 0.12, PIN_TARGET.z + dist);
+        controls.target.set(0, frameTargetY, 0);
+        camera.position.set(0, frameTargetY + 0.12, dist);
         controls.update();
     } else if (savedCamPos && savedTarget) {
         camera.position.copy(savedCamPos);
@@ -426,22 +428,47 @@ function animate() {
 }
 animate();
 
-// The PerspectiveCamera's fov is vertical, so only narrow / portrait viewports
-// risk clipping the phone left and right. Keep at least MIN_VIEW_W world units
-// visible across by pulling the camera straight back when needed — desktop and
-// landscape keep the tuned BASE_DIST framing untouched.
-const BASE_DIST = 4.6;
-const MIN_VIEW_W = 1.5;     // phone body is ~0.98 wide; leave breathing room
+// Responsive framing.
+// The camera's fov is vertical, so the phone — a tall, portrait object
+// (~1.0 wide x ~2.6 tall when open) — is always sized to the viewport HEIGHT.
+// That's why it looks great on tall/portrait screens but shrinks on short, wide
+// laptop and desktop windows: there just aren't many vertical pixels to fill, so
+// the LCD becomes unreadable and the wide sides go empty.
+//
+// Fix: frame ADAPTIVELY. We blend from "show the whole phone" on tall/portrait
+// viewports to "lean in on the lid's LCD" as the viewport gets wider/shorter, so
+// the screen stays large everywhere. The keypad half slides below the on-screen
+// controls (an HTML overlay), which is fine. `lean` (0 tall -> 1 wide) drives
+// both the zoom and the look-at height as one smooth function of aspect ratio.
+//
+// Tuning knobs: WIDE_FRAME_H / WIDE_TARGET_Y control how tight + how high the
+// wide-screen view sits; the lean range sets where the blend starts/ends.
+const PHONE_W = 1.06;          // open-phone width incl. a little margin
+const TALL_FRAME_H = 2.85;     // world units shown when tall/portrait (whole phone)
+const WIDE_FRAME_H = 1.8;      // world units shown when wide/short (LCD + upper body)
+const TALL_TARGET_Y = -0.05;   // look at the phone's centre
+const WIDE_TARGET_Y = 0.42;    // look up toward the lid's LCD
 function sizeToStage() {
     const w = stage.clientWidth, h = stage.clientHeight;
     if (!w || !h) return;
-    camera.aspect = w / h;
-    const viewH = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * BASE_DIST;
-    const viewW = viewH * camera.aspect;
-    const dist = viewW < MIN_VIEW_W ? BASE_DIST * (MIN_VIEW_W / viewW) : BASE_DIST;
+    const aspect = w / h;
+    camera.aspect = aspect;
+
+    const lean = THREE.MathUtils.clamp((aspect - 0.72) / (1.5 - 0.72), 0, 1);
+    const frameH = THREE.MathUtils.lerp(TALL_FRAME_H, WIDE_FRAME_H, lean);
+    frameTargetY = THREE.MathUtils.lerp(TALL_TARGET_Y, WIDE_TARGET_Y, lean);
+
+    const halfTan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const distForH = frameH / (2 * halfTan);                  // fit frameH vertically
+    const distForW = (PHONE_W / 0.9) / aspect / (2 * halfTan); // never clip the sides
+    const dist = Math.max(distForH, distForW);
+
+    controls.minDistance = Math.min(2.6, dist - 0.1);
     controls.maxDistance = Math.max(7, dist + 0.5);
-    // change the orbit radius without disturbing the user's current angle
+
+    // re-aim at the new look-at height, preserving the user's current orbit angle
     const off = camera.position.clone().sub(controls.target).setLength(dist);
+    controls.target.set(0, frameTargetY, 0);
     camera.position.copy(controls.target).add(off);
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
