@@ -389,7 +389,7 @@ button {
 
 .actions {
     display: flex;
-    gap: 10px;
+    gap: clamp(6px, 0.8vw, 10px);
     align-items: center;
     flex-wrap: wrap;
     justify-content: center;
@@ -418,10 +418,10 @@ button {
     appearance: none;
     border: none;
     z-index: 1;
-    font-size: 13px;
+    font-size: clamp(11px, 0.5vw + 9px, 13px);
     font-weight: 700;
     color: var(--ink-soft);
-    padding: 8px 18px;
+    padding: clamp(6px, 0.5vw + 4px, 8px) clamp(11px, 1.2vw + 7px, 18px);
     border-radius: var(--radius-pill);
     background: transparent;
     letter-spacing: 0.2px;
@@ -460,9 +460,9 @@ button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: clamp(13px, 0.6vw + 11px, 14px);
     font-weight: 700;
-    padding: 12px 20px;
+    padding: clamp(10px, 0.7vw + 7px, 12px) clamp(14px, 1.4vw + 9px, 20px);
     border-radius: var(--radius-md);
     border: 1px solid transparent;
     text-decoration: none;
@@ -501,12 +501,12 @@ button {
     display: inline-flex;
     align-items: center;
     gap: 9px;
-    font-size: 14px;
+    font-size: clamp(12px, 0.6vw + 10px, 14px);
     font-weight: 600;
     color: #0c0c14;
     background: linear-gradient(180deg, #ffffff 0%, #d8d8d8 100%);
     border: 1px solid rgba(0, 0, 0, 0.08);
-    padding: 11px 20px;
+    padding: clamp(9px, 0.6vw + 6px, 11px) clamp(14px, 1.4vw + 9px, 20px);
     border-radius: var(--radius-pill);
     box-shadow:
         0 6px 18px rgba(0, 0, 0, 0.4),
@@ -694,10 +694,6 @@ button {
     .hero-copy { display: none; }
     .brand { font-size: 15px; }
     .hero-controls { gap: 6px; bottom: max(14px, env(safe-area-inset-bottom)); }
-    .actions { gap: 8px; }
-    .band { font-size: 12px; padding: 7px 14px; }
-    .btn { padding: 11px 16px; font-size: 13px; }
-    .flip-btn { padding: 10px 18px; font-size: 13px; }
 
     .header-right { flex-wrap: wrap; justify-content: flex-end; }
     .newsletter-hdr { order: 1; }
@@ -705,13 +701,6 @@ button {
     .nl-btn { padding: 6px 10px; font-size: 13px; }
     .nl-form { right: auto; left: 50%; transform: translateX(-50%) translateY(-4px); min-width: 260px; }
     .nl-form.open { transform: translateX(-50%) translateY(0); }
-}
-
-@media (max-width: 380px) {
-    .band { padding: 6px 10px; font-size: 11px; }
-    .btn { padding: 10px 14px; font-size: 13px; }
-    .flip-btn { padding: 8px 14px; font-size: 12px; }
-    .actions { gap: 6px; }
 }
 
 @media (max-height: 560px) {
