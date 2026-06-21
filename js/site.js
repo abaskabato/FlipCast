@@ -82,19 +82,3 @@
         }
     });
 })();
-
-// ---------- shop drawer ----------
-(function () {
-    const drawer = document.getElementById('shopDrawer');
-    const btn = document.getElementById('shopBtn');
-    const close = document.getElementById('shopClose');
-    if (!drawer || !btn || !close) return;
-
-    function open() { drawer.classList.add('open'); document.body.style.overflow = 'hidden'; }
-    function closeDrawer() { drawer.classList.remove('open'); document.body.style.overflow = ''; }
-
-    btn.addEventListener('click', open);
-    close.addEventListener('click', closeDrawer);
-    drawer.querySelector('.drawer-backdrop').addEventListener('click', closeDrawer);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
-})();

@@ -1,9 +1,13 @@
 {
   "name": "flipcast",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
   "description": "FLIPCAST — a 3D WebGL flip phone that tunes thousands of live internet radio stations and podcasts from around the world. No accounts, no backend.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abaskabato/flipphonenews.git"
+  },
   "scripts": {
     "dev": "python3 -m http.server 8080",
     "start": "python3 -m http.server 8080"

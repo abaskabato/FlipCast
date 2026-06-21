@@ -71,3 +71,10 @@ js/
 Station data © the [Radio-Browser](https://www.radio-browser.info/) community
 project. Fallback streams courtesy of [SomaFM](https://somafm.com/) —
 listener-supported; please consider donating to them.
+
+## License
+
+[MIT](LICENSE) — free to use, modify, and redistribute. Open source, no
+strings attached. Contributions welcome.
+
+Bundled [Three.js](https://threejs.org/) is also MIT-licensed.
