@@ -819,25 +819,28 @@ button {
 .site-footer {
     position: fixed;
     z-index: 5;
-    left: 0;
     right: 0;
     bottom: 0;
-    text-align: center;
+    text-align: right;
     padding: 8px 20px;
     padding-bottom: max(8px, env(safe-area-inset-bottom));
     pointer-events: none;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: rgba(255, 255, 255, 0.45);
 }
 .site-footer a {
     font-family: 'Courier New', monospace;
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
     text-decoration: none;
     letter-spacing: 2px;
     transition: color 0.3s;
     pointer-events: auto;
 }
 .site-footer a:hover {
-    color: rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.8);
 }
 
 @media (max-width: 640px) {
