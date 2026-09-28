@@ -1,80 +1,53 @@
-# FLIPCAST
+# Flipcast — Muse Spark
 
-**Flip it open. Tune the world.**
+AI Multi-Platform Dual-Format Video Publisher. Upload a horizontal source asset, pick a target aspect ratio and focal tracking engine, and run the Flipcast transformation pipeline.
 
-FLIPCAST is a 3D flip phone in your browser that tunes thousands of live radio stations and podcasts from around the world. Flip it open, pick a genre or show, press play. No accounts, no signup, no backend — and it's never empty, because somewhere on Earth a station is always live.
-
-Two **bands** share the phone: live **Radio** and on-demand **Podcasts**. Tap the Radio / Podcasts toggle (or press Tab) to switch. In the Podcasts band, browse top shows by category or search, open a show, then play any episode with a scrubbable progress bar (◄◄ / ►► seek 30s).
-
-## Why a radio (and podcasts)
-
-It's the opposite of a cold-start problem: a radio doesn't need other users to be worth using. The moment you open it there's real, live content playing — talk from Tokyo, lo-fi from Berlin, a jazz station in New Orleans — so it's useful to a single visitor on day one.
-
-## How it works
-
-```
-Open the page → 3D flip phone boots → a genre's top stations load
-Flip open      → ◄ ► switch genre · ▲ ▼ pick a station · OK plays
-```
-
-- Stations come from the **[Radio-Browser](https://www.radio-browser.info/) API** — a free, public, community database of live streams. No key, no backend.
-- A curated **fallback list** (SomaFM) is bundled, so the radio still plays if the API is unreachable. The 3D phone always boots regardless.
-- The LCD shows the station name (scrolling), country, genre, bitrate, a live equalizer, and on-air status.
-
-## Controls
-
-- **Drag** to spin the phone · **tap** the phone (or **Open / Close**) to flip
-- **◄ ►** change genre/category · **▲ ▼** pick station/show/episode · **OK / ▶** play & pause
-- **Radio / Podcasts** toggle switches bands (keyboard: **Tab**)
-- Podcasts: **OK** opens a show's episodes; **END** goes back; **◄ ►** seek ±30s while playing
-- Keyboard: arrow keys + **Enter**/**Space** to play, **Esc** to stop / go back
-
-## Local development
-
-Pure static front-end — no build step, no keys:
-
-```bash
-python3 -m http.server 8080   # then open http://localhost:8080
-```
-
-> Note: many radio streams are HTTP-only and get blocked on HTTPS pages (mixed
-> content). The app prefers HTTPS streams and falls back gracefully; on
-> `localhost` everything plays.
+Built on Next.js 15, Vercel, Better Auth, and open-source Postgres.
 
 ## Stack
 
-| What | How |
-|---|---|
-| 3D rendering | Three.js (vendored, no CDN) |
-| Screen UI | Canvas 2D drawn onto the LCD texture (retro green CRT) |
-| Stations | Radio-Browser API + bundled SomaFM fallback |
-| Playback | HTML `<audio>` element streaming directly |
-| Audio FX | Web Audio API (synthesized flip snap) |
-| Install | PWA (`manifest.json`, fullscreen on tap) |
+- Next.js 15, React 19, TypeScript
+- Tailwind CSS 3.4 + lucide-react icons
+- Better Auth (email/password) via `src/lib/auth.ts`, client via `src/lib/auth-client.ts`
+- Open-source Postgres via Drizzle ORM (`src/db/`):
+  - Prod: Neon serverless Postgres (Apache 2.0, Vercel-native)
+  - Local/self-hosted: `docker compose up -d` (Postgres 16, pure open source)
+  - Any Postgres URL also works (including existing Supabase Postgres)
+- API routes: `POST /api/auth/*` (Better Auth), `POST /api/transform` (creates a `video_jobs` row when signed in)
 
-## Project structure
+## Structure
 
 ```
-index.html        entry — importmap, PWA meta, hero, d-pad controls
-js/
-  main.js         Three.js scene, render loop, audio element + input wiring
-  phone.js        3D clamshell model (hinge fold)
-  radio.js        the app — station fetching, tuner UI, playback, navigation
-  lcd.js          shared retro-LCD draw helpers
-  faces.js        keypad + external-screen painters
-  audio.js        synthesized flip sound
-  site.js         PWA fullscreen-on-tap
+├── drizzle.config.ts
+├── docker-compose.yml
+├── drizzle/                  # generated SQL migrations (drizzle-kit generate)
+├── src/
+│   ├── db/schema.ts          # user/session/account/verification + video_jobs
+│   ├── db/index.ts           # Drizzle + pg Pool (lazy, build-safe)
+│   ├── lib/auth.ts           # Better Auth server instance
+│   ├── lib/auth-client.ts    # signIn/signUp/signOut/useSession
+│   ├── app/api/auth/[...all]/route.ts
+│   ├── app/api/transform/route.ts
+│   └── components/flipcast/dashboard.tsx
+├── supabase/schema.sql       # legacy Supabase schema (reference only)
+└── .env.example
 ```
 
-## Credit
+## Setup
 
-Station data © the [Radio-Browser](https://www.radio-browser.info/) community
-project. Fallback streams courtesy of [SomaFM](https://somafm.com/) —
-listener-supported; please consider donating to them.
+1. `npm install`
+2. `cp .env.example .env.local` and set `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`
+   - Local open-source DB: `docker compose up -d` → `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/flipcast`
+   - Or create a free Neon project and use its pooled connection string
+3. `npm run db:generate && npm run db:migrate` (or `npm run db:push` for prototyping)
+4. `npm run dev` — open http://localhost:3000, sign up, then run a transform
+5. `npm run build` to verify production build
+
+## Notes
+
+- `/api/transform` prefers the Better Auth session; without one it still returns a mock job with `persisted: false` so the UI pipeline works in preview.
+- `supabase/schema.sql` is kept for reference; the canonical schema is now `src/db/schema.ts` + `drizzle/`.
 
 ## License
 
-[MIT](LICENSE) — free to use, modify, and redistribute. Open source, no
-strings attached. Contributions welcome.
-
-Bundled [Three.js](https://threejs.org/) is also MIT-licensed.
+MIT
