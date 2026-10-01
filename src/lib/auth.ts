@@ -79,11 +79,28 @@ export const auth = betterAuth({
  * Therefore in production we refuse to start without a real secret rather than
  * falling back. The dev fallback is intentionally hardcoded and only reachable
  * when NODE_ENV !== 'production'.
+ *
+ * One exception: `next build` imports every API route module during "collect
+ * page data", which evaluates this file with production NODE_ENV but no runtime
+ * env vars. Throwing there fails the deploy before it can serve anything, which
+ * is the wrong trade -- a build that cannot render is not more secure than a
+ * build that succeeds. NEXT_PHASE is set only by `next build` and never at
+ * runtime, so this branch cannot be reached by a live server. The placeholder is
+ * never used to sign anything: no page is prerendered with a session, and the
+ * runtime path below still throws.
  */
 function resolveSecret(): string {
   const secret = process.env.BETTER_AUTH_SECRET?.trim();
 
   if (secret && secret.length >= 32) return secret;
+
+  if (isBuildPhase()) {
+    console.warn(
+      '[auth] BETTER_AUTH_SECRET is not set. Using a build-time placeholder; ' +
+        'the deployed server will refuse to start until it is configured.',
+    );
+    return 'build-phase-placeholder-not-used-at-runtime-0';
+  }
 
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
@@ -94,6 +111,17 @@ function resolveSecret(): string {
 
   // Dev only. Never reached in production, per the check above.
   return secret || 'dev-only-insecure-secret-min-32-chars-abcdef';
+}
+
+/**
+ * True only while `next build` is running.
+ *
+ * Set by next/dist/build/index.js before compilation begins, and absent in the
+ * serverless runtime. Deliberately does not consult VERCEL or NODE_ENV, both of
+ * which are also true during a real request on Vercel.
+ */
+function isBuildPhase(): boolean {
+  return process.env.NEXT_PHASE === 'phase-production-build';
 }
 
 /**
