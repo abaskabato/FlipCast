@@ -193,6 +193,56 @@ async function main() {
       results.push(`${ratio.padEnd(6)} ${okDims && okBytes ? 'PASS' : 'FAIL'}  ${probed.dims} (want ${want})  ${(size / 1024).toFixed(0)}KB  ${secs}s  audio=${probed.hasAudio} ${flags}`);
       console.log(`${ratio.padEnd(6)} ${okDims && okBytes ? 'PASS' : 'FAIL'}  ${probed.dims} (want ${want})  ${(size / 1024).toFixed(0)}KB  in ${secs}s  audio=${probed.hasAudio} ${flags}`);
     }
+
+    // Manual crop: the focus offset must produce a correctly sized MP4 whose
+    // pixels actually differ from the centred render. testsrc2 has a visible
+    // gradient, so a differing frame hash proves the window really moved.
+    console.log('\n--- focus offset through the browser render path ---');
+    const renderWithFocus = async (ratio, focus) =>
+      page.evaluate(
+        async ({ ratio, focus }) => {
+          try {
+            return await window.renderOne(ratio, undefined, focus);
+          } catch (e) {
+            return { error: String(e && e.message ? e.message : e) };
+          }
+        },
+        { ratio, focus },
+      );
+
+    const centred = await renderWithFocus('9:16', { x: 0.5, y: 0.5 });
+    const corner = await renderWithFocus('9:16', { x: 0.05, y: 0.05 });
+    const clamped = await renderWithFocus('9:16', { x: 3, y: -2 });
+
+    const cases = [
+      { name: 'centred focus', r: centred, want: CANVAS['9:16'] },
+      { name: 'off-centre focus', r: corner, want: CANVAS['9:16'] },
+      { name: 'out-of-bounds focus (clamped)', r: clamped, want: CANVAS['9:16'] },
+    ];
+    const hashes = [];
+    for (const c of cases) {
+      if (c.r.error) {
+        fail++;
+        console.log(`${c.name.padEnd(32)} FAIL  error: ${c.r.error}`);
+        results.push(`${c.name.padEnd(32)} FAIL  error: ${c.r.error}`);
+        continue;
+      }
+      const out = path.join(work, `focus-${c.name.replace(/[^a-z0-9]+/gi, '-')}.mp4`);
+      await writeFile(out, Buffer.from(c.r.data));
+      const probed = probeLocal(out);
+      const hash = execFileSync('sha256sum', [out]).toString().split(' ')[0];
+      hashes.push(hash);
+      const ok = probed.dims === c.want;
+      if (!ok) fail++;
+      console.log(`${c.name.padEnd(32)} ${ok ? 'PASS' : 'FAIL'}  ${probed.dims} (want ${c.want})  audio=${probed.hasAudio}`);
+      results.push(`${c.name.padEnd(32)} ${ok ? 'PASS' : 'FAIL'}  ${probed.dims} (want ${c.want})`);
+    }
+
+    // Centre vs off-centre must not be byte-identical, or the feature is inert.
+    const moves = hashes.length === 3 && new Set(hashes).size === 3;
+    if (!moves) fail++;
+    console.log(`${'focus values produce distinct output'.padEnd(32)} ${moves ? 'PASS' : 'FAIL'}`);
+    results.push(`${'focus values produce distinct output'.padEnd(32)} ${moves ? 'PASS' : 'FAIL'}`);
   } finally {
     await browser.close();
     server.close();

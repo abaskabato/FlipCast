@@ -34,33 +34,47 @@ render → quota debit against Postgres.
 
 ## 2. Honest gaps
 
-1. **Payments are stubbed.** The Upgrade button does nothing; no Stripe call is
-   made. Free tier is fully enforced in the meantime.
+1. **Payments need keys.** `POST /api/billing/checkout` and the webhook handler
+   are implemented and type-checked, but with no `STRIPE_SECRET_KEY` checkout
+   returns a 503 and the upgrade button explains why. Free tier is fully
+   enforced throughout, so nothing is lost while billing is off. The webhook is
+   the only writer of `subscription_tier` — the client cannot set it.
 2. **`smart_face` renders centred.** No face-detection model; labelled as preview
    in the UI rather than silently faking it.
-3. **`manual_crop` is not interactive.** The mode is selectable but applies the
-   same centred crop; there is no crop UI.
-4. **No history playback.** Past jobs list their metadata, but output bytes were
+3. **No history playback.** Past jobs list their metadata, but output bytes were
    never stored, so old formats can only be re-rendered.
-5. **Speed.** ~8x realtime on a 3 s clip. Mitigated with the MT core and honest
+4. **Speed.** ~8x realtime on a 3 s clip. Mitigated with the MT core and honest
    UI copy, but it is the single biggest UX cost of the browser-render model.
+5. **Pricing page figures are aspirational.** `/pricing` shows intended prices;
+   the authoritative amount is whatever the Stripe price ID encodes.
 
 ## 3. Next (in order)
 
-1. **Interactive manual crop.** Drag a focal point; persist it and pass an
-   offset into `filterExpr`. Highest value, smallest change.
-2. **Stripe.** `POST /api/billing/checkout` + webhook, graceful 503 without
-   keys, real tier limits in `src/lib/quotas.ts`.
-3. **Real face tracking.** Either a small ONNX/WASM detector or per-frame crop
+1. **Turn on billing.** Create the four Stripe prices, set the env vars, register
+   the webhook. Everything else in the payment path is already written.
+2. **Real face tracking.** Either a small ONNX/WASM detector or per-frame crop
    expressions. Needs a latency budget decision, since it multiplies the filter
    work in the slowest part of the pipeline.
-4. **Progress accuracy.** `PATCH /api/transform` currently records terminal
+3. **Progress accuracy.** `PATCH /api/transform` currently records terminal
    state only; wire per-output progress so history can show partial renders.
-5. **COEP audit.** `require-corp` blocks any third-party embed. Analytics,
+4. **COEP audit.** `require-corp` blocks any third-party embed. Analytics,
    Stripe iframes and OAuth popups will each need an explicit carve-out.
-6. **Retention.** Decide whether to store output metadata only (current) or to
+5. **Retention.** Decide whether to store output metadata only (current) or to
    opt users into server-side copies, which reintroduces the storage problem
    browser rendering was chosen to avoid.
+
+## 3a. Shipped since the section above
+
+- **Interactive manual crop.** `filterExpr(ratio, focus)` takes a focal point in
+  frame fractions; `FocusPicker` lets the user click or drag it, with arrow-key
+  support and a live overlay of the real crop rectangle per selected ratio.
+  Verified in `verify:expr` (out-of-bounds focus clamps, centre vs corner must
+  differ) and end-to-end in `verify:render` through the actual browser pipeline.
+- **Billing endpoints.** `POST /api/billing/checkout` (validated with zod,
+  signature-free, redirect URLs derived from `BETTER_AUTH_URL` rather than any
+  request header) and `POST /api/billing/webhook` (raw-body signature
+  verification, the sole writer of `subscription_tier`).
+- **`/pricing` page.** Static, so it cannot fail on a cold serverless start.
 
 ## 4. Oracle VM (deferred, not required)
 

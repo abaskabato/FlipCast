@@ -19,12 +19,18 @@
       // TypeScript original against a real ffmpeg binary.
       const CANVAS = { '9:16': [1080, 1920], '1:1': [1080, 1080], '16:9': [1920, 1080] };
       const ASPECT = { '9:16': 1080 / 1920, '1:1': 1, '16:9': 1920 / 1080 };
-      function filterExpr(ratio) {
+      function filterExpr(ratio, focus) {
         const [w, h] = CANVAS[ratio];
         const t = ASPECT[ratio];
         const cropW = `floor(min(iw\\,ih*${t})/2)*2`;
         const cropH = `floor(min(ih\\,iw/${t})/2)*2`;
-        return [`crop=${cropW}:${cropH}`, `scale=${w}:${h}`, 'setsar=1', 'format=yuv420p'].join(',');
+        // Mirrors normalizeFocus()/hasOffset() in geometry.ts.
+        const fx = typeof focus?.x === 'number' && isFinite(focus.x) ? Math.min(1, Math.max(0, focus.x)) : 0.5;
+        const fy = typeof focus?.y === 'number' && isFinite(focus.y) ? Math.min(1, Math.max(0, focus.y)) : 0.5;
+        const crop = (fx !== 0.5 || fy !== 0.5)
+          ? `crop=${cropW}:${cropH}:max(0\\,floor((iw-${cropW})*${fx.toFixed(6)})):max(0\\,floor((ih-${cropH})*${fy.toFixed(6)}))`
+          : `crop=${cropW}:${cropH}`;
+        return [crop, `scale=${w}:${h}`, 'setsar=1', 'format=yuv420p'].join(',');
       }
 
       let ffmpeg = null;
@@ -68,7 +74,7 @@
         return ffmpeg;
       }
 
-      window.renderOne = async function (ratio, bytes) {
+      window.renderOne = async function (ratio, bytes, focus) {
         const isolated =
           typeof crossOriginIsolated !== 'undefined' &&
           crossOriginIsolated &&
@@ -85,7 +91,7 @@
         await f.writeFile('in.mp4', new Uint8Array(window.__sourceBytes));
         const code = await f.exec([
           '-i', 'in.mp4',
-          '-vf', filterExpr(ratio),
+          '-vf', filterExpr(ratio, focus),
           '-c:v', 'libx264',
           '-preset', 'veryfast',
           '-crf', '23',

@@ -16,7 +16,7 @@
  */
 
 import { loadFFmpegClass, type FFmpegInstance } from './ffmpeg-loader';
-import { filterExpr, OUTPUT_CANVAS, type Ratio } from './geometry';
+import { filterExpr, OUTPUT_CANVAS, type Focus, type Ratio } from './geometry';
 
 /** Core assets are served from /public (see scripts/sync-ffmpeg-core.mjs). */
 const CORE_BASE = '/ffmpeg';
@@ -167,6 +167,10 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
  *
  * Framing uses dimension-free FFmpeg crop expressions (see geometry.filterExpr),
  * so there is no probe step and no chance of cropping against a wrong assumption.
+ *
+ * `focus` shifts the crop window for every output. It is expressed in fractions
+ * of the source frame, so the same value means the same thing on a phone clip and
+ * a 4K one. Omit it (or pass the centre) for the default centred framing.
  */
 export async function renderToRatios(
   file: File,
@@ -175,6 +179,7 @@ export async function renderToRatios(
     onProgress?: (p: RenderProgress) => void;
     onLog?: (line: string) => void;
     signal?: AbortSignal;
+    focus?: Focus | null;
   } = {},
 ): Promise<RenderResult> {
   if (ratios.length === 0) throw new Error('No output formats requested.');
@@ -216,7 +221,7 @@ export async function renderToRatios(
         '-i',
         srcName,
         '-vf',
-        filterExpr(ratio),
+        filterExpr(ratio, opts.focus),
         '-c:v',
         'libx264',
         '-preset',

@@ -19,8 +19,14 @@ import {
 
 import { authClient, useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
+import FocusPicker from './focus-picker';
 import { renderToRatios, RenderAbortedError, type RenderedOutput } from '@/lib/video/ffmpeg-client';
-import { OUTPUT_CANVAS, type Ratio } from '@/lib/video/geometry';
+import {
+  CENTER_FOCUS,
+  OUTPUT_CANVAS,
+  type Focus,
+  type Ratio,
+} from '@/lib/video/geometry';
 import { probeVideo, formatBytes, type VideoMeta } from '@/lib/video/probe';
 import { BROWSER_MAX_INPUT_BYTES, formatDuration, formatQuota } from '@/lib/quotas';
 
@@ -56,6 +62,8 @@ export default function FlipcastDashboard() {
   const [dragActive, setDragActive] = useState(false);
   const [targets, setTargets] = useState<TargetRatio[]>(['9:16']);
   const [trackingMode, setTrackingMode] = useState<TrackingMode>('auto_center');
+  // Manual crop focal point, as fractions of the frame. Applies to every output.
+  const [focus, setFocus] = useState<Focus>(CENTER_FOCUS);
 
   const [usage, setUsage] = useState<Usage | null>(null);
   const [isRendering, setIsRendering] = useState(false);
@@ -64,6 +72,7 @@ export default function FlipcastDashboard() {
   const [outputs, setOutputs] = useState<RenderedOutput[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -93,6 +102,70 @@ export default function FlipcastDashboard() {
 
   useEffect(() => {
     void loadUsage();
+  }, [loadUsage]);
+
+  // ---- billing ----------------------------------------------------------
+  /**
+   * Send the user to Stripe Checkout.
+   *
+   * `?plan=` lets the caller choose a tier; the default is Creator, which is the
+   * plan most people upgrading from the free tier want.
+   *
+   * A 503 is the expected response while billing is unconfigured (no Stripe
+   * keys), so surface the server's reason rather than a generic failure. The
+   * free allowance keeps working either way.
+   */
+  const openUpgrade = useCallback(async () => {
+    setCheckoutBusy(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tier = params.get('plan') === 'agency' ? 'agency' : 'creator';
+      const res = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier, period: 'monthly' }),
+      });
+
+      if (!res.ok) {
+        let message = 'Could not start checkout. Please try again.';
+        try {
+          const data = await res.json();
+          if (typeof data?.message === 'string') message = data.message;
+        } catch {
+          // keep the default message
+        }
+        setNotice(message);
+        return;
+      }
+
+      const { url } = (await res.json()) as { url?: string };
+      if (!url) {
+        setNotice('Checkout did not return a link. Please try again.');
+        return;
+      }
+      // Full navigation so the session cookie is sent to Stripe and back.
+      window.location.href = url;
+    } catch {
+      setNotice('Could not reach the server to start checkout.');
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }, []);
+
+  // After returning from Stripe, re-read usage so the new tier and the reset
+  // window appear immediately instead of after a manual refresh.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('upgraded') === '1') {
+      setNotice('Payment received. Your plan updates as soon as Stripe confirms it.');
+      void loadUsage();
+      // Drop the query string so a refresh does not re-trigger this.
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (params.get('cancelled') === '1') {
+      setNotice('Checkout cancelled — nothing was charged.');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, [loadUsage]);
 
   // ---- file selection ---------------------------------------------------
@@ -202,6 +275,9 @@ export default function FlipcastDashboard() {
     try {
       const result = await renderToRatios(file, targets, {
         signal: controller.signal,
+        // Manual crop is the only mode that moves the window; the others keep
+        // centred framing so this stays undefined for them.
+        focus: trackingMode === 'manual_crop' ? focus : null,
         onProgress: ({ progress: p, label }) => {
           setProgress(p);
           setPhase(label);
@@ -367,14 +443,11 @@ export default function FlipcastDashboard() {
               </p>
               {usage.tier === 'free' && (
                 <button
-                  onClick={() =>
-                    setNotice(
-                      'Paid plans are not launched yet — no card is needed and nothing will be charged. For now the free allowance is all there is.',
-                    )
-                  }
-                  className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-300 transition-colors hover:bg-indigo-500/20"
+                  onClick={openUpgrade}
+                  disabled={checkoutBusy}
+                  className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-300 transition-colors hover:bg-indigo-500/20 disabled:opacity-50"
                 >
-                  Upgrade
+                  {checkoutBusy ? 'Opening…' : 'Upgrade'}
                 </button>
               )}
             </div>
@@ -549,9 +622,25 @@ export default function FlipcastDashboard() {
                     Subject tracking is in preview — currently renders centred.
                   </p>
                 )}
+                {mode.id === 'manual_crop' && (
+                  <p className="mt-1 text-[11px] text-emerald-400/80">
+                    Click or drag the frame below to choose what stays in shot.
+                  </p>
+                )}
               </button>
             ))}
           </div>
+
+          {trackingMode === 'manual_crop' && file && (
+            <FocusPicker
+              focus={focus}
+              onChange={setFocus}
+              disabled={isRendering}
+              sourceWidth={meta?.width ?? null}
+              sourceHeight={meta?.height ?? null}
+              ratios={targets}
+            />
+          )}
         </div>
       </section>
 
@@ -648,7 +737,10 @@ export default function FlipcastDashboard() {
       )}
 
       <footer className="pb-6 text-center text-[11px] text-slate-600">
-        Flipcast · renders run in your browser · MIT licensed
+        Flipcast · renders run in your browser · MIT licensed ·{' '}
+        <a href="/pricing" className="text-slate-500 underline-offset-2 hover:text-slate-400 hover:underline">
+          Pricing
+        </a>
       </footer>
     </div>
   );

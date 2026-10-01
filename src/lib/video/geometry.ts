@@ -108,6 +108,29 @@ export function filterFor(srcW: number, srcH: number, ratio: Ratio): string {
 }
 
 /**
+ * Where the subject sits, as fractions of the source frame (0..1).
+ *
+ * Defaults to the centre. Used by manual crop so a user can keep a face or
+ * product in frame instead of losing it to a centre crop.
+ */
+export type Focus = { x: number; y: number };
+
+export const CENTER_FOCUS: Focus = { x: 0.5, y: 0.5 };
+
+/** Clamp a caller-supplied focus into the unit square. */
+export function normalizeFocus(focus?: Partial<Focus> | null): Focus {
+  const x = typeof focus?.x === 'number' && Number.isFinite(focus.x) ? focus.x : CENTER_FOCUS.x;
+  const y = typeof focus?.y === 'number' && Number.isFinite(focus.y) ? focus.y : CENTER_FOCUS.y;
+  return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+}
+
+/** True when a focus point differs from centre and needs a non-zero offset. */
+export function hasOffset(focus?: Partial<Focus> | null): boolean {
+  const f = normalizeFocus(focus);
+  return Math.abs(f.x - CENTER_FOCUS.x) > 1e-6 || Math.abs(f.y - CENTER_FOCUS.y) > 1e-6;
+}
+
+/**
  * Dimension-free equivalent of {@link filterFor}, expressed with FFmpeg's own
  * crop expressions so it evaluates against the real decoded frame at runtime.
  *
@@ -119,15 +142,33 @@ export function filterFor(srcW: number, srcH: number, ratio: Ratio): string {
  * `min(iw, ih*T)` picks the crop width and `min(ih, iw/T)` the crop height,
  * which yields the largest centred rectangle of the target shape that fits.
  * Both are floored to an even number because yuv420p needs even dimensions.
+ *
+ * `focus` shifts the crop window without changing its size. The offsets are
+ * `max(0, (iw - cw) * fx)` and the same for y, which keeps the crop inside the
+ * frame at every focus value: at fx=0 the window sits flush left, at fx=1 flush
+ * right, and the max() clamps the extremes. Omitting them when the focus is
+ * centred keeps the common path byte-identical to the previous behaviour.
  */
-export function filterExpr(ratio: Ratio): string {
+export function filterExpr(ratio: Ratio, focus?: Partial<Focus> | null): string {
   const { w, h } = OUTPUT_CANVAS[ratio];
   const t = aspect(ratio);
   // Comma inside min() must be escaped inside a filtergraph description.
   const cropW = `floor(min(iw\\,ih*${t})/2)*2`;
   const cropH = `floor(min(ih\\,iw/${t})/2)*2`;
+
+  const crop = hasOffset(focus)
+    ? (() => {
+        const f = normalizeFocus(focus);
+        // 6 decimal places is well below one source pixel at any real
+        // resolution, and keeps the expression short.
+        const ox = `max(0\\,floor((iw-${cropW})*${f.x.toFixed(6)}))`;
+        const oy = `max(0\\,floor((ih-${cropH})*${f.y.toFixed(6)}))`;
+        return `crop=${cropW}:${cropH}:${ox}:${oy}`;
+      })()
+    : `crop=${cropW}:${cropH}`;
+
   return [
-    `crop=${cropW}:${cropH}`,
+    crop,
     `scale=${w}:${h}`,
     // Keep square pixels: the crop rectangle is not exactly the target shape
     // after even-rounding, so compensate instead of letting players stretch.

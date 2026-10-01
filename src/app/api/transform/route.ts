@@ -76,7 +76,12 @@ export async function POST(request: Request) {
 
   try {
     // Advisory pre-check so we can return a friendly message before touching
-    // the database. The authoritative check is the atomic reservation below.
+    // the database. The authoritative check is the atomic reservation below,
+    // which re-reads the tier from the DB.
+    //
+    // Note the tier is never accepted from the request body: it is written only
+    // by the Stripe webhook. A client-settable tier would make the paywall
+    // bypassable from devtools.
     const tier = (session.user as { subscriptionTier?: string }).subscriptionTier ?? 'free';
     const decision = checkQuota({
       tier,
