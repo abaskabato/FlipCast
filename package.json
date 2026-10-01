@@ -13,6 +13,7 @@
     "verify:probe": "node scripts/verify-probe.mjs",
     "verify:render": "node scripts/verify-render.mjs",
     "verify:e2e": "node scripts/verify-e2e.mjs",
+    "check:env": "node scripts/check-env.mjs",
     "verify": "npm run verify:geometry && npm run verify:expr && npm run verify:probe && npm run verify:render",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
