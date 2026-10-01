@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Upload,
   Video,
@@ -10,382 +10,545 @@ import {
   AlertTriangle,
   ArrowRight,
   Download,
-  RefreshCw,
+  Loader2,
+  X,
+  ShieldCheck,
+  HardDrive,
+  Clock,
 } from 'lucide-react';
 
-import { signIn, signOut, signUp, useSession } from '@/lib/auth-client';
+import { authClient, useSession } from '@/lib/auth-client';
+import { AuthPanel } from './auth-panel';
+import { renderToRatios, RenderAbortedError, type RenderedOutput } from '@/lib/video/ffmpeg-client';
+import { OUTPUT_CANVAS, type Ratio } from '@/lib/video/geometry';
+import { probeVideo, formatBytes, type VideoMeta } from '@/lib/video/probe';
+import { BROWSER_MAX_INPUT_BYTES, formatDuration, formatQuota } from '@/lib/quotas';
 
-interface PlanUsage {
-  email: string;
-  tier: 'free' | 'creator' | 'agency';
-  usedSeconds: number;
-  maxSeconds: number;
-}
-
-type TargetRatio = '9:16' | '1:1' | '16:9';
+type TargetRatio = Ratio;
 type TrackingMode = 'auto_center' | 'smart_face' | 'manual_crop';
 
-interface CompleteJob {
-  id: string;
-  url: string;
-}
+type Usage = {
+  tier: string;
+  usedSeconds: number;
+  limitSeconds: number;
+  remainingSeconds: number;
+};
 
-interface RatioOption {
-  id: TargetRatio;
-  title: string;
-  desc: string;
-}
-
-interface ModeOption {
-  id: TrackingMode;
-  title: string;
-  desc: string;
-}
-
-const RATIO_OPTIONS: RatioOption[] = [
-  { id: '9:16', title: '9:16 Vertical', desc: 'TikTok, Shorts, Reels' },
-  { id: '1:1', title: '1:1 Square', desc: 'Feed Posts' },
-  { id: '16:9', title: '16:9 Landscape', desc: 'Standard Stream' },
+const RATIO_OPTIONS: { id: TargetRatio; title: string; desc: string; platforms: string }[] = [
+  { id: '9:16', title: '9:16 Vertical', desc: 'Full-bleed vertical', platforms: 'TikTok · Reels · Shorts' },
+  { id: '1:1', title: '1:1 Square', desc: 'Feed post crop', platforms: 'Instagram · LinkedIn' },
+  { id: '16:9', title: '16:9 Landscape', desc: 'Widescreen master', platforms: 'YouTube · X' },
 ];
 
-const MODE_OPTIONS: ModeOption[] = [
-  {
-    id: 'auto_center',
-    title: 'Auto Static Focus',
-    desc: 'Locks strictly into absolute screen coordinates',
-  },
-  {
-    id: 'smart_face',
-    title: 'AI Smart Face Track',
-    desc: 'Follows face/movement dynamics algorithmically',
-  },
-  {
-    id: 'manual_crop',
-    title: 'Manual Aspect Clip',
-    desc: 'Manually specify regional output parameters',
-  },
+const MODE_OPTIONS: { id: TrackingMode; title: string; desc: string }[] = [
+  { id: 'auto_center', title: 'Auto Centre', desc: 'Centred crop, no distortion' },
+  { id: 'smart_face', title: 'Smart Face Track', desc: 'Subject-aware reframing' },
+  { id: 'manual_crop', title: 'Manual Crop', desc: 'Choose your own framing' },
 ];
 
-const PROCESS_STEPS = [
-  { text: 'Analyzing subject composition vectors...', delay: 1000, prog: 20 },
-  { text: 'Tracking focal elements & clipping viewports...', delay: 1500, prog: 55 },
-  { text: 'Generating dynamic aspect boundaries...', delay: 1000, prog: 85 },
-  { text: 'Finalizing dual-stream layout export...', delay: 800, prog: 100 },
-];
+const MAX_FILE_BYTES = BROWSER_MAX_INPUT_BYTES;
 
 export default function FlipcastDashboard() {
   const { data: session, isPending: sessionPending } = useSession();
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [authMode, setAuthMode] = useState<'signIn' | 'signUp'>('signIn');
-  const [authBusy, setAuthBusy] = useState(false);
-  const user: PlanUsage = {
-    email: session?.user?.email ?? 'creator@musespark.io (preview)',
-    tier: 'free',
-    usedSeconds: 75,
-    maxSeconds: 180,
-  };
-  const [selectedFile, setSelectedFile] = useState<FileList | null>(null);
+
+  const [file, setFile] = useState<File | null>(null);
+  const [meta, setMeta] = useState<VideoMeta | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [targetRatio, setTargetRatio] = useState<TargetRatio>('9:16');
+  const [targets, setTargets] = useState<TargetRatio[]>(['9:16']);
   const [trackingMode, setTrackingMode] = useState<TrackingMode>('auto_center');
-  const [isProcessing, setIsProcessing] = useState(false);
+
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [isRendering, setIsRendering] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [processStatus, setProcessStatus] = useState<string>('');
-  const [completeJob, setCompleteJob] = useState<CompleteJob | null>(null);
+  const [phase, setPhase] = useState('');
+  const [outputs, setOutputs] = useState<RenderedOutput[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') setDragActive(true);
-    else if (e.type === 'dragleave') setDragActive(false);
-  };
+  const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setSelectedFile(e.dataTransfer.files);
-      setCompleteJob(null);
-      setError(null);
-    }
-  };
+  const signedIn = Boolean(session?.user);
 
-  const handleFileSelect = (files: FileList | null) => {
-    if (files && files.length > 0) {
-      const file = files[0];
-      if (file.size > 500 * 1024 * 1024) {
-        setError('File exceeds 500MB limit.');
-        return;
-      }
-      setSelectedFile(files);
-      setCompleteJob(null);
-      setError(null);
-    }
-  };
-
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!authEmail || !authPassword) {
-      setError('Enter an email and password to continue.');
+  // ---- usage ------------------------------------------------------------
+  const loadUsage = useCallback(async () => {
+    if (!signedIn) {
+      setUsage(null);
       return;
     }
-    setAuthBusy(true);
-    setError(null);
     try {
-      if (authMode === 'signUp') {
-        const res = await signUp.email({
-          email: authEmail,
-          password: authPassword,
-          name: authEmail.split('@')[0],
-        });
-        if (res.error) throw new Error(res.error.message || 'Sign-up failed');
-      } else {
-        const res = await signIn.email({ email: authEmail, password: authPassword });
-        if (res.error) throw new Error(res.error.message || 'Sign-in failed');
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed.');
-    } finally {
-      setAuthBusy(false);
+      const res = await fetch('/api/me/usage');
+      if (!res.ok) return;
+      const data = await res.json();
+      setUsage({
+        tier: data.tier,
+        usedSeconds: data.usedSeconds,
+        limitSeconds: data.limitSeconds,
+        remainingSeconds: data.remainingSeconds,
+      });
+    } catch {
+      // usage is non-critical; rendering still works
     }
-  };
+  }, [signedIn]);
 
-  const simulateProcessing = async () => {
-    if (!selectedFile || isProcessing) return;
-    const fileName = selectedFile[0].name;
-    setIsProcessing(true);
-    setCompleteJob(null);
-    setError(null);
+  useEffect(() => {
+    void loadUsage();
+  }, [loadUsage]);
+
+  // ---- file selection ---------------------------------------------------
+  const acceptFile = useCallback(
+    async (next: File | null) => {
+      setError(null);
+      setNotice(null);
+      setOutputs([]);
+      if (!next) {
+        setFile(null);
+        setMeta(null);
+        return;
+      }
+      if (next.size > MAX_FILE_BYTES) {
+        setError(`That file is ${formatBytes(next.size)}. The limit is ${formatBytes(MAX_FILE_BYTES)}.`);
+        setFile(null);
+        setMeta(null);
+        return;
+      }
+      setFile(next);
+      try {
+        const probed = await probeVideo(next);
+        setMeta(probed);
+        if (signedIn && usage && probed.durationSeconds > usage.remainingSeconds) {
+          setNotice(
+            `This clip is ${formatDuration(probed.durationSeconds)}, but you have ${formatQuota(usage.remainingSeconds)} left this month.`,
+          );
+        }
+      } catch (e) {
+        setFile(null);
+        setMeta(null);
+        setError(e instanceof Error ? e.message : 'Could not read that video.');
+      }
+    },
+    [signedIn, usage],
+  );
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragActive(false);
+      const dropped = e.dataTransfer.files?.[0];
+      if (dropped) void acceptFile(dropped);
+    },
+    [acceptFile],
+  );
+
+  // ---- render -----------------------------------------------------------
+  const startRender = useCallback(async () => {
+    if (!file || !meta || isRendering) return;
+    if (!signedIn) {
+      setError('Sign in to render. It is free and needs no card.');
+      return;
+    }
+    if (targets.length === 0) {
+      setError('Pick at least one output format.');
+      return;
+    }
+    if (usage && meta.durationSeconds > usage.remainingSeconds) {
+      setError(
+        `Not enough quota left. This clip needs ${formatDuration(meta.durationSeconds)}; you have ${formatQuota(usage.remainingSeconds)}.`,
+      );
+      return;
+    }
+
+    setIsRendering(true);
     setProgress(0);
+    setPhase('Preparing…');
+    setError(null);
+    setOutputs([]);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
+    // Authorise + reserve quota before spending a long render.
+    let jobId: string | null = null;
     try {
-      await fetch('/api/transform', {
+      const startRes = await fetch('/api/transform', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fileName,
-          targetRatio,
+          fileName: file.name,
+          targets,
           mode: trackingMode,
+          sourceDurationSeconds: meta.durationSeconds,
+          sourceWidth: meta.width,
+          sourceHeight: meta.height,
+          sourceSizeBytes: file.size,
         }),
       });
+      const startBody = await startRes.json().catch(() => ({}));
+      if (!startRes.ok) {
+        setError(startBody.error ?? 'Could not start the render.');
+        setIsRendering(false);
+        abortRef.current = null;
+        return;
+      }
+      jobId = startBody.jobId;
+      setUsage(startBody.usage ?? null);
     } catch {
-      // Simulation continues even if API is unreachable in preview mode.
+      setError('Could not reach the server to reserve your quota.');
+      setIsRendering(false);
+      abortRef.current = null;
+      return;
     }
 
-    for (const step of PROCESS_STEPS) {
-      setProcessStatus(step.text);
-      await new Promise((res) => setTimeout(res, step.delay));
-      setProgress(step.prog);
-    }
+    try {
+      const result = await renderToRatios(file, targets, {
+        signal: controller.signal,
+        onProgress: ({ progress: p, label }) => {
+          setProgress(p);
+          setPhase(label);
+        },
+      });
 
-    setIsProcessing(false);
-    setCompleteJob({
-      id: Math.random().toString(36).substring(5).toUpperCase(),
-      url: '#',
-    });
+      setOutputs(result.outputs);
+      setProgress(1);
+      setPhase(
+        `Done in ${formatDuration(result.elapsedSeconds)} · rendered locally, nothing uploaded`,
+      );
+
+      await fetch('/api/transform', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          status: 'completed',
+          outputs: result.outputs.map((o) => ({
+            ratio: o.ratio,
+            sizeBytes: o.sizeBytes,
+            width: o.width,
+            height: o.height,
+          })),
+        }),
+      }).catch(() => undefined);
+      void loadUsage();
+    } catch (e) {
+      const aborted = e instanceof RenderAbortedError;
+      setError(aborted ? 'Render cancelled.' : e instanceof Error ? e.message : 'Render failed.');
+      if (!aborted) {
+        await fetch('/api/transform', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId, status: 'failed', error: String(e).slice(0, 400) }),
+        }).catch(() => undefined);
+        void loadUsage();
+      }
+    } finally {
+      setIsRendering(false);
+      abortRef.current = null;
+    }
+  }, [file, meta, isRendering, signedIn, targets, trackingMode, usage, loadUsage]);
+
+  const cancelRender = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const toggleTarget = (ratio: TargetRatio) => {
+    setTargets((prev) =>
+      prev.includes(ratio) ? prev.filter((r) => r !== ratio) : [...prev, ratio],
+    );
   };
 
-  const usagePercentage = (user.usedSeconds / user.maxSeconds) * 100;
-  const selectedFileName = selectedFile?.[0]?.name ?? null;
+  const downloadOutput = (output: RenderedOutput) => {
+    const url = URL.createObjectURL(output.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = output.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Give the browser a moment to start the download before revoking.
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  };
+
+  const downloadAll = () => {
+    outputs.forEach((o, i) => setTimeout(() => downloadOutput(o), i * 400));
+  };
+
+  // One stable object URL per output.
+  //
+  // Creating these inline in JSX would mint a fresh URL on every re-render
+  // (progress ticks, quota refreshes), which leaks the old ones and makes the
+  // <video> previews restart from frame 0. Revoke them when the outputs change.
+  const previewUrls = useMemo(() => {
+    const urls = new Map<string, string>();
+    for (const o of outputs) urls.set(o.ratio, URL.createObjectURL(o.blob));
+    return urls;
+  }, [outputs]);
+
+  useEffect(() => {
+    const urls = previewUrls;
+    return () => {
+      for (const url of urls.values()) URL.revokeObjectURL(url);
+    };
+  }, [previewUrls]);
+
+  const reset = () => {
+    setFile(null);
+    setMeta(null);
+    setOutputs([]);
+    setProgress(0);
+    setPhase('');
+    setError(null);
+    setNotice(null);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  const usagePercent = usage
+    ? Math.min(100, (usage.usedSeconds / Math.max(1, usage.limitSeconds)) * 100)
+    : 0;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="mx-auto max-w-6xl space-y-6">
       {/* Header */}
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-6 bg-slate-900 border border-slate-800 rounded-2xl gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-indigo-600 rounded-xl text-white shadow-lg shadow-indigo-600/20">
-            <Layers className="h-6 w-6" />
+      <header className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-indigo-600 p-2.5 text-white shadow-lg shadow-indigo-600/20">
+              <Layers className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-white">
+                Flipcast
+                <span className="rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400">
+                  local render
+                </span>
+              </h1>
+              <p className="text-xs text-slate-400">
+                {sessionPending
+                  ? 'Checking session…'
+                  : signedIn
+                    ? (session?.user?.email ?? '')
+                    : 'One clip in, every platform out'}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              Flipcast
-              <span className="text-xs bg-indigo-500/10 text-indigo-400 font-semibold px-2 py-0.5 rounded-full border border-indigo-500/20">
-                by Muse Spark
-              </span>
-            </h1>
-            <p className="text-xs text-slate-400">
-              {sessionPending ? 'Checking session…' : user.email}
-            </p>
-            {session?.user && (
-              <button
-                onClick={() => signOut()}
-                className="text-[11px] text-slate-500 hover:text-slate-300 font-semibold transition-colors"
-              >
-                Sign out
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="w-full sm:w-64 space-y-2">
-          <div className="flex justify-between text-xs font-medium">
-            <span className="text-slate-400">Monthly AI Render Engine</span>
-            <span className="text-white font-semibold">
-              {user.usedSeconds}s / {user.maxSeconds}s
-            </span>
-          </div>
-          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-            <div
-              className="bg-indigo-500 h-full rounded-full transition-all duration-300"
-              style={{ width: `${usagePercentage}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-              Tier: {user.tier}
-            </span>
-            <button className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold transition-colors">
-              Upgrade Tier →
+
+          {signedIn ? (
+            <button
+              onClick={() => authClient.signOut()}
+              className="self-start text-[11px] font-semibold text-slate-500 transition-colors hover:text-slate-300"
+            >
+              Sign out
             </button>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2 self-start rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-400">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Nothing leaves your device
+            </div>
+          )}
         </div>
+
+        {usage && (
+          <div className="mt-4 space-y-1.5">
+            <div className="flex justify-between text-xs font-medium">
+              <span className="text-slate-400">Render time this month</span>
+              <span className="font-semibold text-white">
+                {formatQuota(usage.usedSeconds)} / {formatQuota(usage.limitSeconds)}
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                style={{ width: `${usagePercent}%` }}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] text-slate-500">
+                {formatQuota(usage.remainingSeconds)} remaining ·{' '}
+                <span className="capitalize">{usage.tier}</span> plan
+              </p>
+              {usage.tier === 'free' && (
+                <button
+                  onClick={() =>
+                    setNotice(
+                      'Paid plans are not launched yet — no card is needed and nothing will be charged. For now the free allowance is all there is.',
+                    )
+                  }
+                  className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-300 transition-colors hover:bg-indigo-500/20"
+                >
+                  Upgrade
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Auth */}
-      {!sessionPending && !session?.user && (
-        <section className="p-6 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-white tracking-tight">
-              {authMode === 'signUp' ? 'Create account' : 'Sign in'}
-            </h2>
-            <button
-              onClick={() => setAuthMode(authMode === 'signUp' ? 'signIn' : 'signUp')}
-              className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"
-            >
-              {authMode === 'signUp' ? 'Have an account? Sign in' : 'New here? Sign up'}
-            </button>
-          </div>
-          <form onSubmit={handleAuth} className="grid sm:grid-cols-[1fr_1fr_auto] gap-2">
-            <input
-              type="email"
-              required
-              placeholder="you@studio.com"
-              value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
-              className="h-10 px-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white placeholder:text-slate-600 outline-none focus:border-indigo-500"
-            />
-            <input
-              type="password"
-              required
-              placeholder="Password"
-              value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
-              className="h-10 px-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white placeholder:text-slate-600 outline-none focus:border-indigo-500"
-            />
-            <button
-              type="submit"
-              disabled={authBusy}
-              className="h-10 px-5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 rounded-xl text-xs font-bold text-white transition-colors"
-            >
-              {authBusy ? 'Please wait…' : authMode === 'signUp' ? 'Sign up' : 'Sign in'}
-            </button>
-          </form>
-          <p className="text-[11px] text-slate-600">
-            Auth by Better Auth + open-source Postgres. Jobs persist only when signed in.
-          </p>
-        </section>
+      {!sessionPending && !signedIn && (
+        <AuthPanel onSignedIn={() => void loadUsage()} />
       )}
 
-      {/* Upload zone */}
+      {/* Upload */}
       <div
-        onDragEnter={handleDrag}
-        onDragOver={handleDrag}
-        onDragLeave={handleDrag}
-        onDrop={handleDrop}
-        className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-all duration-200 cursor-pointer ${
+        onDragEnter={(e) => {
+          e.preventDefault();
+          setDragActive(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragActive(true);
+        }}
+        onDragLeave={(e) => {
+          // preventDefault lives on DragEvent; stopPropagation does not.
+          e.preventDefault();
+          setDragActive(false);
+        }}
+        onDrop={onDrop}
+        onClick={() => !isRendering && inputRef.current?.click()}
+        className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-8 text-center transition-all duration-200 ${
           dragActive
             ? 'border-indigo-500 bg-indigo-500/5'
             : 'border-slate-800 bg-slate-900/50 hover:bg-slate-900'
-        }`}
+        } ${isRendering ? 'pointer-events-none opacity-60' : ''}`}
       >
         <input
+          ref={inputRef}
           type="file"
-          accept="video/*"
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          onChange={(e) => handleFileSelect(e.target.files)}
+          accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/*"
+          className="hidden"
+          onChange={(e) => void acceptFile(e.target.files?.[0] ?? null)}
         />
-        {selectedFile ? (
+        {file && meta ? (
           <div className="flex flex-col items-center gap-2">
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
+            <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 p-3">
               <Video className="h-6 w-6 text-emerald-400" />
             </div>
-            <p className="text-sm font-semibold text-white">{selectedFileName}</p>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-              Stage Ready
-            </span>
+            <p className="max-w-full truncate text-sm font-semibold text-white">{file.name}</p>
+            <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
+              <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 font-bold uppercase tracking-wider text-emerald-400">
+                {meta.width}×{meta.height}
+              </span>
+              <span className="flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-400">
+                <Clock className="h-3 w-3" />
+                {formatDuration(meta.durationSeconds)}
+              </span>
+              <span className="flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-400">
+                <HardDrive className="h-3 w-3" />
+                {formatBytes(file.size)}
+              </span>
+            </div>
+            {!isRendering && outputs.length === 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  reset();
+                }}
+                className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-slate-500 transition-colors hover:text-slate-300"
+              >
+                <X className="h-3 w-3" />
+                Choose a different file
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2">
-            <div className="p-3 bg-slate-800 rounded-full">
+            <div className="rounded-full bg-slate-800 p-3">
               <Upload className="h-6 w-6 text-slate-400" />
             </div>
             <p className="text-sm font-medium text-slate-200">
-              Drag &amp; drop your source asset or browse
+              Drop a horizontal master, or click to browse
             </p>
             <p className="text-xs text-slate-500">
-              Supports horizontal high-definition formats up to 500MB
+              MP4, MOV, WebM or MKV up to {formatBytes(MAX_FILE_BYTES)}
             </p>
           </div>
         )}
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-300">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {error}
+        <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
-      {/* Engine parameters */}
-      <section className="grid md:grid-cols-2 gap-6">
-        <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-          <h2 className="text-sm font-bold text-white tracking-tight">Engine Parameters</h2>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Target Output Aspect Ratio
+      {!error && notice && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{notice}</span>
+        </div>
+      )}
+
+      {/* Engine params */}
+      <section className="grid gap-6 md:grid-cols-2">
+        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-sm font-bold tracking-tight text-white">Output formats</h2>
+            <span className="text-[11px] font-semibold text-indigo-400">
+              {targets.length} selected
+            </span>
+          </div>
+          <p className="text-xs text-slate-500">
+            Pick any combination. Each format is rendered from the same source.
           </p>
-          <div className="grid gap-3">
-            {RATIO_OPTIONS.map((ratio) => (
-              <button
-                key={ratio.id}
-                onClick={() => setTargetRatio(ratio.id)}
-                className={`p-4 rounded-xl border text-left transition-all ${
-                  targetRatio === ratio.id
-                    ? 'border-indigo-500 bg-indigo-500/5 ring-1 ring-indigo-500'
-                    : 'border-slate-800 bg-slate-950 hover:bg-slate-900 text-slate-400'
-                }`}
-              >
-                <p className="text-sm font-semibold text-white">{ratio.title}</p>
-                <p className="text-xs text-slate-500">{ratio.desc}</p>
-              </button>
-            ))}
+          <div className="grid gap-2">
+            {RATIO_OPTIONS.map((ratio) => {
+              const active = targets.includes(ratio.id);
+              const canvas = OUTPUT_CANVAS[ratio.id];
+              return (
+                <button
+                  key={ratio.id}
+                  onClick={() => toggleTarget(ratio.id)}
+                  disabled={isRendering}
+                  className={`flex items-center justify-between rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
+                    active
+                      ? 'border-indigo-500 bg-indigo-500/5 ring-1 ring-indigo-500'
+                      : 'border-slate-800 bg-slate-950 hover:bg-slate-900'
+                  }`}
+                >
+                  <div>
+                    <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <span
+                        className={`inline-block h-3 w-3 rounded-sm border ${
+                          active ? 'border-indigo-400 bg-indigo-500' : 'border-slate-600'
+                        }`}
+                      />
+                      {ratio.title}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500">{ratio.platforms}</p>
+                  </div>
+                  <span className="shrink-0 font-mono text-[11px] text-slate-500">
+                    {canvas.w}×{canvas.h}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-          <h2 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
-            Focal Tracking Engine Mode
-          </h2>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Select processing pipeline
-          </p>
-          <div className="grid gap-3">
+        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <h2 className="text-sm font-bold tracking-tight text-white">Reframing mode</h2>
+          <div className="grid gap-2">
             {MODE_OPTIONS.map((mode) => (
               <button
                 key={mode.id}
                 onClick={() => setTrackingMode(mode.id)}
-                className={`p-4 rounded-xl border text-left transition-all ${
+                disabled={isRendering}
+                className={`rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
                   trackingMode === mode.id
                     ? 'border-indigo-500 bg-indigo-500/5 ring-1 ring-indigo-500'
-                    : 'border-slate-800 bg-slate-950 hover:bg-slate-900 text-slate-400'
+                    : 'border-slate-800 bg-slate-950 hover:bg-slate-900'
                 }`}
               >
-                <p className="text-sm font-semibold text-white flex items-center gap-2">
+                <p className="flex items-center gap-2 text-sm font-semibold text-white">
                   {mode.id === 'smart_face' && <Sparkles className="h-3.5 w-3.5 text-indigo-400" />}
                   {mode.title}
                 </p>
-                <p className="text-xs text-slate-500">{mode.desc}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{mode.desc}</p>
+                {mode.id === 'smart_face' && (
+                  <p className="mt-1 text-[11px] text-amber-400/80">
+                    Subject tracking is in preview — currently renders centred.
+                  </p>
+                )}
               </button>
             ))}
           </div>
@@ -393,92 +556,99 @@ export default function FlipcastDashboard() {
       </section>
 
       {/* Action */}
-      <button
-        onClick={simulateProcessing}
-        disabled={!selectedFile || isProcessing}
-        className="w-full h-11 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-xl text-xs font-semibold text-white transition-all shadow-lg shadow-indigo-600/10 flex items-center justify-center gap-2 group"
-      >
-        {isProcessing ? (
-          <>
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            Compiling Spatial Frames...
-          </>
-        ) : (
-          <>
-            Initialize Flipcast Transformation
-            <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-          </>
-        )}
-      </button>
-
-      {/* Pipeline queue */}
-      <section className="p-6 bg-slate-900 border border-slate-800 rounded-2xl space-y-4">
-        <h2 className="text-sm font-bold text-white tracking-tight">Pipeline Execution Queue</h2>
-
-        {!selectedFile && !isProcessing && !completeJob && (
-          <p className="text-sm text-slate-500">
-            No active transformations currently initialized in queue pipeline.
-          </p>
-        )}
-
-        {isProcessing && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="font-medium text-slate-200 flex items-center gap-2">
-                <Video className="h-4 w-4 text-indigo-400" />
-                {selectedFileName}
-              </span>
-              <span className="font-bold text-indigo-400">{progress}%</span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-              <div
-                className="bg-indigo-500 h-full rounded-full transition-all duration-200"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="text-xs text-slate-400">{processStatus}</p>
-          </div>
-        )}
-
-        {completeJob && !isProcessing && (
-          <div className="p-5 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-3">
-            <p className="text-sm font-bold text-emerald-300 flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4" />
-              Transformation Complete
-            </p>
-            <div className="grid sm:grid-cols-3 gap-2 text-xs">
-              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <p className="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
-                  Job ID
-                </p>
-                <p className="text-white font-mono font-bold">JOB_ID: {completeJob.id}</p>
-              </div>
-              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <p className="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
-                  Format
-                </p>
-                <p className="text-white font-bold">FORMAT: {targetRatio} Vertical Matrix</p>
-              </div>
-              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
-                <p className="text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
-                  Engine
-                </p>
-                <p className="text-white font-bold">ENGINE: {trackingMode}</p>
-              </div>
-            </div>
-            <a
-              href={completeJob.url}
-              className="inline-flex items-center gap-2 h-10 px-5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white transition-colors"
+      {isRendering ? (
+        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 font-medium text-slate-200">
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
+              {phase || 'Rendering…'}
+            </span>
+            <button
+              onClick={cancelRender}
+              className="text-[11px] font-semibold text-slate-400 transition-colors hover:text-red-400"
             >
-              <Download className="h-4 w-4" />
-              Download Media Deliverable
-            </a>
+              Cancel
+            </button>
           </div>
-        )}
-      </section>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+            <div
+              className="h-full rounded-full bg-indigo-500 transition-all duration-200"
+              style={{ width: `${Math.round(progress * 100)}%` }}
+            />
+          </div>
+          <p className="text-xs text-slate-500">
+            Rendering on this device. Local encoding is slower than a server but keeps your file
+            private. Keep this tab open.
+          </p>
+        </div>
+      ) : (
+        <button
+          onClick={startRender}
+          disabled={!file || !meta || targets.length === 0}
+          className="group flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 text-xs font-semibold text-white shadow-lg shadow-indigo-600/10 transition-all hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
+        >
+          {signedIn ? 'Render on this device' : 'Sign in to render'}
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+        </button>
+      )}
 
-      <footer className="text-center text-[11px] text-slate-600">
-        Flipcast Core Infrastructure Engine v1.0.0
+      {/* Outputs */}
+      {outputs.length > 0 && (
+        <section className="space-y-4 rounded-2xl border border-emerald-500/20 bg-slate-900 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-sm font-bold text-emerald-300">
+              <CheckCircle2 className="h-4 w-4" />
+              {outputs.length} {outputs.length === 1 ? 'format' : 'formats'} ready
+            </h2>
+            <div className="flex gap-2">
+              <button
+                onClick={downloadAll}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white transition-colors hover:bg-emerald-500"
+              >
+                Download all
+              </button>
+              <button
+                onClick={reset}
+                className="rounded-lg border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-400 transition-colors hover:text-slate-200"
+              >
+                Start over
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {outputs.map((o) => (
+              <div
+                key={o.ratio}
+                className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4"
+              >
+                <video
+                  src={previewUrls.get(o.ratio)}
+                  className="aspect-square w-full rounded-lg bg-black object-contain"
+                  controls
+                  playsInline
+                />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-white">{o.ratio} · {o.width}×{o.height}</p>
+                  <p className="text-[11px] text-slate-500">{formatBytes(o.sizeBytes)}</p>
+                </div>
+                <button
+                  onClick={() => downloadOutput(o)}
+                  className="mt-auto flex h-9 items-center justify-center gap-2 rounded-lg bg-indigo-600 text-[11px] font-bold text-white transition-colors hover:bg-indigo-500"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {phase && <p className="text-xs text-slate-500">{phase}</p>}
+        </section>
+      )}
+
+      <footer className="pb-6 text-center text-[11px] text-slate-600">
+        Flipcast · renders run in your browser · MIT licensed
       </footer>
     </div>
   );

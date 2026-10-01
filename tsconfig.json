@@ -35,6 +35,12 @@
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    ".next",
+    // Vendored, unbundled ffmpeg assets copied into public/ by
+    // scripts/sync-ffmpeg-core.mjs. These are served verbatim at runtime and
+    // must NOT be type-checked: their .d.ts files collide with the DOM lib
+    // ("Cannot find name 'document'") and they are never imported by src/.
+    "public"
   ]
 }

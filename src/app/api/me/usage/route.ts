@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { db } from '@/db';
-import { user as userTable } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { getUsage } from '@/lib/usage';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { TIER_LIMITS, maxSourceSeconds, TIER_PRICE_LABEL } from '@/lib/quotas';
+
+export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
   const ip = clientIp(request.headers);
@@ -14,24 +15,18 @@ export async function GET(request: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
   try {
-    const rows = await db
-      .select({
-        tier: userTable.subscriptionTier,
-        used: userTable.monthlyUsageSeconds,
-        max: userTable.maxUsageLimit,
-        email: userTable.email,
-      })
-      .from(userTable)
-      .where(eq(userTable.id, session.user.id))
-      .limit(1);
-    const row = rows[0];
-    if (!row) return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    const usage = await getUsage(session.user.id);
+    if (!usage) return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+
+    const tier = usage.tier;
     return NextResponse.json({
-      email: row.email,
-      tier: row.tier,
-      usedSeconds: row.used,
-      maxSeconds: row.max,
+      email: session.user.email,
+      ...usage,
+      tierLabel: TIER_PRICE_LABEL[tier] ?? tier,
+      maxSourceSeconds: maxSourceSeconds(tier),
+      planLimits: TIER_LIMITS,
     });
   } catch (e) {
     console.error('usage error', e);

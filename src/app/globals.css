@@ -1,3 +1,28 @@
+/*
+ * Tailwind directives must come first.
+ *
+ * @daveyplate/better-auth-ui/dist/style.css uses `@layer base`, so Tailwind's
+ * base layer has to exist before it is imported (see layout.tsx) - otherwise
+ * PostCSS errors with "`@layer base` is used but no matching `@tailwind base`
+ * directive is present".
+ */
+/*
+ * better-auth-ui's own stylesheet is not imported: it contains only five
+ * --team-* custom properties (for its org/team features, which we do not
+ * enable) wrapped in `@layer base`. Importing it makes PostCSS fail with
+ * "`@layer base` is used but no matching `@tailwind base` directive is
+ * present", because css-loader/postcss process it as a separate entry.
+ * Declaring the same variables here keeps the integration working with no
+ * layer ordering fragility.
+ */
+:root {
+  --team-1: oklch(0.646 0.222 41.116);
+  --team-2: oklch(0.6 0.118 184.704);
+  --team-3: oklch(0.398 0.07 227.392);
+  --team-4: oklch(0.828 0.189 84.429);
+  --team-5: oklch(0.769 0.188 70.08);
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,4 +33,10 @@
 
 body {
   background-color: #020617;
+}
+
+/* better-auth-ui renders light-mode surfaces by default; align them to the
+   app's dark palette so the sign-in panel does not glare. */
+[data-better-auth-ui] {
+  color-scheme: dark;
 }

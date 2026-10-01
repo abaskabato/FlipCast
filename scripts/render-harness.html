@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Flipcast render harness</title>
+  </head>
+  <body>
+    <pre id="out">loading…</pre>
+    <script type="module">
+      // Imports the real engine through a compiled bundle so we test the same
+      // code path the app uses, not a hand-written copy.
+      import { FFmpeg } from '/node_modules/@ffmpeg/ffmpeg/dist/esm/index.js';
+
+      const SINGLE = '/ffmpeg/0.12.10';
+      const MT = '/ffmpeg/mt';
+
+      // Mirror of src/lib/video/geometry.ts filterExpr(), inlined so this
+      // harness needs no build step. verify-expr.mjs proves it matches the
+      // TypeScript original against a real ffmpeg binary.
+      const CANVAS = { '9:16': [1080, 1920], '1:1': [1080, 1080], '16:9': [1920, 1080] };
+      const ASPECT = { '9:16': 1080 / 1920, '1:1': 1, '16:9': 1920 / 1080 };
+      function filterExpr(ratio) {
+        const [w, h] = CANVAS[ratio];
+        const t = ASPECT[ratio];
+        const cropW = `floor(min(iw\\,ih*${t})/2)*2`;
+        const cropH = `floor(min(ih\\,iw/${t})/2)*2`;
+        return [`crop=${cropW}:${cropH}`, `scale=${w}:${h}`, 'setsar=1', 'format=yuv420p'].join(',');
+      }
+
+      let ffmpeg = null;
+
+      async function load() {
+        if (ffmpeg) return ffmpeg;
+        const isolated =
+          typeof crossOriginIsolated !== 'undefined' &&
+          crossOriginIsolated &&
+          typeof SharedArrayBuffer !== 'undefined' &&
+          (navigator.hardwareConcurrency ?? 1) >= 4;
+
+        if (isolated) {
+          try {
+            const f = new FFmpeg();
+            f.on('log', ({ type, message }) => console.log('[ffmpeg-mt]', type, message));
+            // Direct same-origin paths, matching src/lib/video/ffmpeg-client.ts.
+            // Do NOT switch to toBlobURL: the core is imported as an ES module
+            // by a module worker, so a blob URL breaks that import chain.
+            await f.load({
+              coreURL: `${MT}/ffmpeg-core.js`,
+              wasmURL: `${MT}/ffmpeg-core.wasm`,
+              workerURL: `${MT}/ffmpeg-core.worker.js`,
+            });
+            ffmpeg = f;
+            window.__mt = true;
+            return ffmpeg;
+          } catch (e) {
+            window.__mtError = String(e && e.stack ? e.stack : e);
+            console.error('MT load failed:', window.__mtError);
+          }
+        }
+
+        const f = new FFmpeg();
+        await f.load({
+          coreURL: `${SINGLE}/ffmpeg-core.js`,
+          wasmURL: `${SINGLE}/ffmpeg-core.wasm`,
+        });
+        ffmpeg = f;
+        window.__mt = false;
+        return ffmpeg;
+      }
+
+      window.renderOne = async function (ratio, bytes) {
+        const isolated =
+          typeof crossOriginIsolated !== 'undefined' &&
+          crossOriginIsolated &&
+          typeof SharedArrayBuffer !== 'undefined';
+        // Keep a plain copy of the source. ffmpeg's writeFile TRANSFERS the
+        // buffer to its worker, which detaches it, so a reused Uint8Array is
+        // dead on the next call - hence the per-call copy below.
+        if (bytes) {
+          window.__sourceBytes = bytes;
+        }
+
+        const f = await load();
+        const outName = `out-${ratio.replace(':', 'x')}.mp4`;
+        await f.writeFile('in.mp4', new Uint8Array(window.__sourceBytes));
+        const code = await f.exec([
+          '-i', 'in.mp4',
+          '-vf', filterExpr(ratio),
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-crf', '23',
+          '-pix_fmt', 'yuv420p',
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-ac', '2',
+          '-movflags', '+faststart',
+          outName,
+        ]);
+        const data = await f.readFile(outName);
+        await f.deleteFile(outName);
+        await f.deleteFile('in.mp4');
+        return {
+          isolated,
+          mt: !!window.__mt,
+          code,
+          data: Array.from(data),
+        };
+      };
+
+      document.getElementById('out').textContent = 'ready';
+    </script>
+  </body>
+</html>
