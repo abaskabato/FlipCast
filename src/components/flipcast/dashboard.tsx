@@ -6,6 +6,7 @@ import {
   Video,
   Layers,
   Sparkles,
+  Check,
   CheckCircle2,
   AlertTriangle,
   ArrowRight,
@@ -382,22 +383,20 @@ export default function FlipcastDashboard() {
     : 0;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6">
       {/* Header */}
-      <header className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+      <header className="fc-card p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="rounded-xl bg-indigo-600 p-2.5 text-white shadow-lg shadow-indigo-600/20">
               <Layers className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-white">
+              <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold tracking-tight text-white">
                 Flipcast
-                <span className="rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5 text-xs font-semibold text-indigo-400">
-                  local render
-                </span>
+                <span className="fc-chip-accent">local render</span>
               </h1>
-              <p className="text-xs text-slate-400">
+              <p className="fc-meta mt-0.5">
                 {sessionPending
                   ? 'Checking session…'
                   : signedIn
@@ -410,56 +409,22 @@ export default function FlipcastDashboard() {
           {signedIn ? (
             <button
               onClick={() => authClient.signOut()}
-              className="self-start text-[11px] font-semibold text-slate-500 transition-colors hover:text-slate-300"
+              className="fc-btn-ghost self-start"
             >
               Sign out
             </button>
           ) : (
-            <div className="flex items-center gap-2 self-start rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-400">
+            <div className="fc-chip-accent self-start !border-emerald-500/25 !bg-emerald-500/10 !text-emerald-300">
               <ShieldCheck className="h-3.5 w-3.5" />
               Nothing leaves your device
             </div>
           )}
         </div>
-
-        {usage && (
-          <div className="mt-4 space-y-1.5">
-            <div className="flex justify-between text-xs font-medium">
-              <span className="text-slate-400">Render time this month</span>
-              <span className="font-semibold text-white">
-                {formatQuota(usage.usedSeconds)} / {formatQuota(usage.limitSeconds)}
-              </span>
-            </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
-              <div
-                className="h-full rounded-full bg-indigo-500 transition-all duration-300"
-                style={{ width: `${usagePercent}%` }}
-              />
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[11px] text-slate-500">
-                {formatQuota(usage.remainingSeconds)} remaining ·{' '}
-                <span className="capitalize">{usage.tier}</span> plan
-              </p>
-              {usage.tier === 'free' && (
-                <button
-                  onClick={openUpgrade}
-                  disabled={checkoutBusy}
-                  className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-300 transition-colors hover:bg-indigo-500/20 disabled:opacity-50"
-                >
-                  {checkoutBusy ? 'Opening…' : 'Upgrade'}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </header>
 
-      {/* Auth */}
-      {!sessionPending && !signedIn && (
-        <AuthPanel onSignedIn={() => void loadUsage()} />
-      )}
-
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        {/* Work column: the render pipeline, in order. */}
+        <div className="order-2 space-y-6 lg:order-1">
       {/* Upload */}
       <div
         onDragEnter={(e) => {
@@ -477,10 +442,10 @@ export default function FlipcastDashboard() {
         }}
         onDrop={onDrop}
         onClick={() => !isRendering && inputRef.current?.click()}
-        className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-8 text-center transition-all duration-200 ${
+        className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-all duration-200 ${
           dragActive
             ? 'border-indigo-500 bg-indigo-500/5'
-            : 'border-slate-800 bg-slate-900/50 hover:bg-slate-900'
+            : 'border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900'
         } ${isRendering ? 'pointer-events-none opacity-60' : ''}`}
       >
         <input
@@ -491,21 +456,21 @@ export default function FlipcastDashboard() {
           onChange={(e) => void acceptFile(e.target.files?.[0] ?? null)}
         />
         {file && meta ? (
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-3">
             <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 p-3">
               <Video className="h-6 w-6 text-emerald-400" />
             </div>
             <p className="max-w-full truncate text-sm font-semibold text-white">{file.name}</p>
-            <div className="flex flex-wrap items-center justify-center gap-2 text-[11px]">
-              <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 font-bold uppercase tracking-wider text-emerald-400">
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <span className="fc-chip font-mono !text-emerald-300">
                 {meta.width}×{meta.height}
               </span>
-              <span className="flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-400">
-                <Clock className="h-3 w-3" />
+              <span className="fc-chip">
+                <Clock className="h-3.5 w-3.5" />
                 {formatDuration(meta.durationSeconds)}
               </span>
-              <span className="flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-slate-400">
-                <HardDrive className="h-3 w-3" />
+              <span className="fc-chip">
+                <HardDrive className="h-3.5 w-3.5" />
                 {formatBytes(file.size)}
               </span>
             </div>
@@ -515,22 +480,22 @@ export default function FlipcastDashboard() {
                   e.stopPropagation();
                   reset();
                 }}
-                className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-slate-500 transition-colors hover:text-slate-300"
+                className="fc-btn-ghost"
               >
-                <X className="h-3 w-3" />
+                <X className="h-3.5 w-3.5" />
                 Choose a different file
               </button>
             )}
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-2">
-            <div className="rounded-full bg-slate-800 p-3">
+          <div className="flex flex-col items-center gap-3">
+            <div className="rounded-full bg-slate-800 p-3.5">
               <Upload className="h-6 w-6 text-slate-400" />
             </div>
-            <p className="text-sm font-medium text-slate-200">
+            <p className="text-base font-medium text-slate-200">
               Drop a horizontal master, or click to browse
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="fc-meta">
               MP4, MOV, WebM or MKV up to {formatBytes(MAX_FILE_BYTES)}
             </p>
           </div>
@@ -538,29 +503,29 @@ export default function FlipcastDashboard() {
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+        <div className="fc-notice-error" role="alert">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       {!error && notice && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-300">
+        <div className="fc-notice-warn" role="status">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{notice}</span>
         </div>
       )}
 
       {/* Engine params */}
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-sm font-bold tracking-tight text-white">Output formats</h2>
-            <span className="text-[11px] font-semibold text-indigo-400">
+      <section className="grid gap-6 xl:grid-cols-2">
+        <div className="fc-card space-y-3 p-5">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="fc-heading">Output formats</h2>
+            <span className="fc-chip-accent shrink-0">
               {targets.length} selected
             </span>
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="fc-body">
             Pick any combination. Each format is rendered from the same source.
           </p>
           <div className="grid gap-2">
@@ -572,24 +537,27 @@ export default function FlipcastDashboard() {
                   key={ratio.id}
                   onClick={() => toggleTarget(ratio.id)}
                   disabled={isRendering}
-                  className={`flex items-center justify-between rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
+                  aria-pressed={active}
+                  className={`flex min-h-[56px] items-center justify-between gap-3 rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
                     active
                       ? 'border-indigo-500 bg-indigo-500/5 ring-1 ring-indigo-500'
-                      : 'border-slate-800 bg-slate-950 hover:bg-slate-900'
+                      : 'border-slate-800 bg-slate-950 hover:border-slate-700 hover:bg-slate-900'
                   }`}
                 >
-                  <div>
-                    <p className="flex items-center gap-2 text-sm font-semibold text-white">
-                      <span
-                        className={`inline-block h-3 w-3 rounded-sm border ${
-                          active ? 'border-indigo-400 bg-indigo-500' : 'border-slate-600'
-                        }`}
-                      />
-                      {ratio.title}
-                    </p>
-                    <p className="mt-0.5 text-xs text-slate-500">{ratio.platforms}</p>
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+                        active ? 'border-indigo-400 bg-indigo-500' : 'border-slate-600'
+                      }`}
+                    >
+                      {active && <Check className="h-3 w-3 text-white" />}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-white">{ratio.title}</p>
+                      <p className="fc-meta">{ratio.platforms}</p>
+                    </div>
                   </div>
-                  <span className="shrink-0 font-mono text-[11px] text-slate-500">
+                  <span className="fc-chip shrink-0 font-mono">
                     {canvas.w}×{canvas.h}
                   </span>
                 </button>
@@ -598,32 +566,33 @@ export default function FlipcastDashboard() {
           </div>
         </div>
 
-        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-sm font-bold tracking-tight text-white">Reframing mode</h2>
+        <div className="fc-card space-y-3 p-5">
+          <h2 className="fc-heading">Reframing mode</h2>
           <div className="grid gap-2">
             {MODE_OPTIONS.map((mode) => (
               <button
                 key={mode.id}
                 onClick={() => setTrackingMode(mode.id)}
                 disabled={isRendering}
-                className={`rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
+                aria-pressed={trackingMode === mode.id}
+                className={`min-h-[56px] rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
                   trackingMode === mode.id
                     ? 'border-indigo-500 bg-indigo-500/5 ring-1 ring-indigo-500'
-                    : 'border-slate-800 bg-slate-950 hover:bg-slate-900'
+                    : 'border-slate-800 bg-slate-950 hover:border-slate-700 hover:bg-slate-900'
                 }`}
               >
                 <p className="flex items-center gap-2 text-sm font-semibold text-white">
                   {mode.id === 'smart_face' && <Sparkles className="h-3.5 w-3.5 text-indigo-400" />}
                   {mode.title}
                 </p>
-                <p className="mt-0.5 text-xs text-slate-500">{mode.desc}</p>
+                <p className="fc-body mt-0.5">{mode.desc}</p>
                 {mode.id === 'smart_face' && (
-                  <p className="mt-1 text-[11px] text-amber-400/80">
+                  <p className="fc-meta mt-1.5 text-amber-300/90">
                     Subject tracking is in preview — currently renders centred.
                   </p>
                 )}
                 {mode.id === 'manual_crop' && (
-                  <p className="mt-1 text-[11px] text-emerald-400/80">
+                  <p className="fc-meta mt-1.5 text-emerald-300/90">
                     Click or drag the frame below to choose what stays in shot.
                   </p>
                 )}
@@ -654,18 +623,25 @@ export default function FlipcastDashboard() {
             </span>
             <button
               onClick={cancelRender}
-              className="text-[11px] font-semibold text-slate-400 transition-colors hover:text-red-400"
+              className="fc-btn-ghost hover:!text-red-300"
             >
               Cancel
             </button>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+          <div
+            className="h-2 w-full overflow-hidden rounded-full bg-slate-800"
+            role="progressbar"
+            aria-valuenow={Math.round(progress * 100)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Render progress"
+          >
             <div
               className="h-full rounded-full bg-indigo-500 transition-all duration-200"
               style={{ width: `${Math.round(progress * 100)}%` }}
             />
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="fc-meta">
             Rendering on this device. Local encoding is slower than a server but keeps your file
             private. Keep this tab open.
           </p>
@@ -674,7 +650,7 @@ export default function FlipcastDashboard() {
         <button
           onClick={startRender}
           disabled={!file || !meta || targets.length === 0}
-          className="group flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 text-xs font-semibold text-white shadow-lg shadow-indigo-600/10 transition-all hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
+          className="group flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
         >
           {signedIn ? 'Render on this device' : 'Sign in to render'}
           <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
@@ -683,23 +659,17 @@ export default function FlipcastDashboard() {
 
       {/* Outputs */}
       {outputs.length > 0 && (
-        <section className="space-y-4 rounded-2xl border border-emerald-500/20 bg-slate-900 p-5">
+        <section className="fc-card space-y-4 !border-emerald-500/25 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-sm font-bold text-emerald-300">
+            <h2 className="flex items-center gap-2 text-base font-semibold text-emerald-300">
               <CheckCircle2 className="h-4 w-4" />
               {outputs.length} {outputs.length === 1 ? 'format' : 'formats'} ready
             </h2>
             <div className="flex gap-2">
-              <button
-                onClick={downloadAll}
-                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white transition-colors hover:bg-emerald-500"
-              >
+              <button onClick={downloadAll} className="fc-btn !bg-emerald-600 hover:!bg-emerald-500">
                 Download all
               </button>
-              <button
-                onClick={reset}
-                className="rounded-lg border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-400 transition-colors hover:text-slate-200"
-              >
+              <button onClick={reset} className="fc-btn-secondary">
                 Start over
               </button>
             </div>
@@ -719,26 +689,100 @@ export default function FlipcastDashboard() {
                 />
                 <div className="space-y-1">
                   <p className="text-sm font-semibold text-white">{o.ratio} · {o.width}×{o.height}</p>
-                  <p className="text-[11px] text-slate-500">{formatBytes(o.sizeBytes)}</p>
+                  <p className="fc-meta">{formatBytes(o.sizeBytes)}</p>
                 </div>
                 <button
                   onClick={() => downloadOutput(o)}
-                  className="mt-auto flex h-9 items-center justify-center gap-2 rounded-lg bg-indigo-600 text-[11px] font-bold text-white transition-colors hover:bg-indigo-500"
+                  className="fc-btn-primary mt-auto w-full"
                 >
-                  <Download className="h-3.5 w-3.5" />
+                  <Download className="h-4 w-4" />
                   Download
                 </button>
               </div>
             ))}
           </div>
 
-          {phase && <p className="text-xs text-slate-500">{phase}</p>}
+          {phase && <p className="fc-meta">{phase}</p>}
         </section>
       )}
 
-      <footer className="pb-6 text-center text-[11px] text-slate-600">
-        Flipcast · renders run in your browser · MIT licensed ·{' '}
-        <a href="/pricing" className="text-slate-500 underline-offset-2 hover:text-slate-400 hover:underline">
+      </div>
+
+        {/* Sidebar: account and quota. Sticky so the meter stays visible while
+            the user scrolls through format options. */}
+        <aside className="order-1 space-y-4 lg:order-2 lg:sticky lg:top-6">
+          {!sessionPending && !signedIn && (
+            <AuthPanel onSignedIn={() => void loadUsage()} />
+          )}
+
+          {usage && (
+            <div className="fc-card space-y-3 p-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="fc-heading">This month</h2>
+                <span className="fc-chip-accent capitalize">{usage.tier}</span>
+              </div>
+
+              <div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-semibold text-white">
+                    {formatQuota(usage.usedSeconds)}
+                  </span>
+                  <span className="fc-meta">of {formatQuota(usage.limitSeconds)}</span>
+                </div>
+                <div
+                  className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-800"
+                  role="progressbar"
+                  aria-valuenow={Math.round(usagePercent)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Monthly render time used"
+                >
+                  <div
+                    className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                    style={{ width: `${usagePercent}%` }}
+                  />
+                </div>
+                <p className="fc-meta mt-2">
+                  {formatQuota(usage.remainingSeconds)} of render time left
+                </p>
+              </div>
+
+              {usage.tier === 'free' && (
+                <button
+                  onClick={openUpgrade}
+                  disabled={checkoutBusy}
+                  className="fc-btn-primary w-full"
+                >
+                  {checkoutBusy ? 'Opening…' : 'Upgrade plan'}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="fc-card space-y-3 p-5">
+            <h2 className="fc-heading">How it works</h2>
+            <ol className="space-y-3">
+              {[
+                'Drop in one horizontal master.',
+                'Choose your formats and what stays in shot.',
+                'We encode in this tab — nothing is uploaded.',
+              ].map((step, i) => (
+                <li key={step} className="flex gap-3">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-slate-300">
+                    {i + 1}
+                  </span>
+                  <span className="fc-body">{step}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </aside>
+      </div>
+
+      <footer className="mt-8 flex flex-wrap items-center justify-center gap-x-1 gap-y-1 pb-6 text-center text-xs text-slate-600">
+        <span>Flipcast · renders run in your browser · MIT licensed</span>
+        <span aria-hidden="true">·</span>
+        <a href="/pricing" className="fc-link !text-slate-500 hover:!text-slate-300">
           Pricing
         </a>
       </footer>

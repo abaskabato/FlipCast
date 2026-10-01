@@ -160,9 +160,9 @@ export default function FocusPicker({
   }, [sourceWidth, sourceHeight, ratios, focus.x, focus.y]);
 
   return (
-    <div className="mt-3 space-y-2 rounded-xl border border-slate-800 bg-slate-950 p-3">
-      <div className="flex items-center justify-between">
-        <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+    <div className="fc-card-inset mt-3 space-y-2 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-200">
           <Crosshair className="h-3.5 w-3.5 text-indigo-400" />
           Focal point
         </p>
@@ -170,9 +170,9 @@ export default function FocusPicker({
           type="button"
           onClick={() => onChange(CENTER_FOCUS)}
           disabled={disabled || isCentred}
-          className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 transition-colors hover:text-slate-200 disabled:opacity-40"
+          className="fc-btn-ghost disabled:opacity-40"
         >
-          <RotateCcw className="h-3 w-3" />
+          <RotateCcw className="h-3.5 w-3.5" />
           Recentre
         </button>
       </div>
@@ -204,7 +204,7 @@ export default function FocusPicker({
               zIndex: 1,
             }}
           >
-            <span className="absolute -top-0.5 left-1 rounded bg-slate-950/80 px-1 text-[9px] font-bold text-indigo-300">
+            <span className="absolute -top-0.5 left-1 rounded bg-slate-950/80 px-1 text-[10px] font-semibold text-indigo-300">
               {o.ratio}
               {overlays.length > 1 ? ` ${i + 1}` : ''}
             </span>
@@ -221,13 +221,13 @@ export default function FocusPicker({
         </div>
 
         {!sourceWidth && (
-          <p className="absolute inset-0 flex items-center justify-center p-3 text-center text-[11px] text-slate-500">
+          <p className="absolute inset-0 flex items-center justify-center p-3 text-center text-xs text-slate-500">
             Frame dimensions unavailable — you can still set a focal point.
           </p>
         )}
       </div>
 
-      <p className="text-[11px] text-slate-500">
+      <p className="fc-meta">
         {isCentred
           ? 'Centred — same as Auto Centre.'
           : `Kept at ${Math.round(focus.x * 100)}% across, ${Math.round(focus.y * 100)}% down. Applies to every format.`}

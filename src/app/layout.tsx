@@ -19,12 +19,14 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: '#020617',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="bg-slate-950 text-slate-50 antialiased">{children}</body>
+      <body className="min-h-screen text-slate-50 antialiased">{children}</body>
     </html>
   );
 }

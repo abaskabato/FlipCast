@@ -73,22 +73,22 @@ const PLANS: PlanCopy[] = [
 
 export default function PricingPage() {
   return (
-    <main className="min-h-screen bg-slate-950 px-5 py-16 text-slate-100">
+    <main className="min-h-screen px-5 py-16 text-slate-100">
       <div className="mx-auto max-w-5xl">
         <div className="text-center">
-          <Link href="/" className="text-sm font-semibold text-indigo-400 hover:text-indigo-300">
+          <Link href="/" className="fc-link mx-auto">
             ← Back to Flipcast
           </Link>
-          <h1 className="mt-6 text-4xl font-bold tracking-tight text-white">
+          <h1 className="mt-6 text-4xl font-bold tracking-tight text-white sm:text-5xl">
             Every format, from one upload
           </h1>
-          <p className="mx-auto mt-3 max-w-2xl text-slate-400">
+          <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-slate-400">
             Flipcast renders 9:16, 1:1 and 16:9 cuts in your browser. Your footage is never
             uploaded, so there is no per-minute processing bill to pass on to you.
           </p>
         </div>
 
-        <div className="mt-12 grid gap-5 md:grid-cols-3">
+        <div className="mt-12 grid items-start gap-6 md:grid-cols-3">
           {PLANS.map((plan) => (
             <div
               key={plan.id}
@@ -98,7 +98,7 @@ export default function PricingPage() {
                   : 'border-slate-800 bg-slate-900'
               }`}
             >
-              <p className="text-sm font-semibold text-slate-300">
+              <p className="text-base font-semibold text-slate-200">
                 {TIER_PRICE_LABEL[plan.id]}
               </p>
               <p className="mt-3 flex items-baseline gap-1.5">
@@ -117,10 +117,10 @@ export default function PricingPage() {
 
               <Link
                 href={plan.id === 'free' ? '/' : `/?plan=${plan.id}#upgrade`}
-                className={`mt-6 rounded-lg px-4 py-2.5 text-center text-sm font-semibold transition-colors ${
+                className={`fc-btn mt-6 w-full ${
                   plan.featured
                     ? 'bg-indigo-500 text-white hover:bg-indigo-400'
-                    : 'border border-slate-700 text-slate-200 hover:bg-slate-800'
+                    : 'border border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-800'
                 }`}
               >
                 {plan.cta}
@@ -136,22 +136,22 @@ export default function PricingPage() {
 
         <section className="mt-14 grid gap-6 sm:grid-cols-3">
           <div>
-            <h2 className="text-sm font-bold text-white">Why it&apos;s fast enough</h2>
-            <p className="mt-1.5 text-sm text-slate-400">
+            <h2 className="fc-heading">Why it&apos;s fast enough</h2>
+            <p className="fc-body mt-1.5">
               Encoding runs in your tab with multi-threaded FFmpeg, so there is no queue and no
               cold start.
             </p>
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">Why it&apos;s private</h2>
-            <p className="mt-1.5 text-sm text-slate-400">
+            <h2 className="fc-heading">Why it&apos;s private</h2>
+            <p className="fc-body mt-1.5">
               The video never leaves your device. Only job metadata — duration, format, size —
               reaches the server.
             </p>
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white">What counts as usage</h2>
-            <p className="mt-1.5 text-sm text-slate-400">
+            <h2 className="fc-heading">What counts as usage</h2>
+            <p className="fc-body mt-1.5">
               We charge for seconds of your source video, not exports. One clip exported to
               three formats costs the same as one.
             </p>

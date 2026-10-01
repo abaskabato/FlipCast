@@ -1,6 +1,12 @@
 /*
- * Tailwind directives must come first.
+ * Design tokens and shared primitives.
  *
+ * These exist because the audit turned up four competing radii, an 11px body
+ * size and tap targets as small as 13px. The utilities below make those the
+ * path of least resistance so the components stop re-deriving them inline.
+ */
+
+/*
  * @daveyplate/better-auth-ui/dist/style.css uses `@layer base`, so Tailwind's
  * base layer has to exist before it is imported (see layout.tsx) - otherwise
  * PostCSS errors with "`@layer base` is used but no matching `@tailwind base`
@@ -21,6 +27,20 @@
   --team-3: oklch(0.398 0.07 227.392);
   --team-4: oklch(0.828 0.189 84.429);
   --team-5: oklch(0.769 0.188 70.08);
+
+  /* Surfaces. Lifted slightly off pure slate so panels read as panels. */
+  --fc-bg: 2 6 23;
+  --fc-surface: 15 23 42;
+  --fc-surface-2: 2 6 23;
+  --fc-border: 30 41 59;
+
+  /* One radius scale, two steps. */
+  --fc-radius: 12px;
+  --fc-radius-lg: 16px;
+
+  /* Minimum comfortable target. 44px is the platform guideline; 36 is the
+     floor for secondary controls so dense rows stay dense. */
+  --fc-tap: 36px;
 }
 
 @tailwind base;
@@ -31,12 +51,111 @@
   color-scheme: dark;
 }
 
+html {
+  /* Stop iOS Safari inflating text in landscape. */
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
-  background-color: #020617;
+  background-color: rgb(var(--fc-bg));
+  /* A very low-contrast lift so the page is not a flat void. */
+  background-image: radial-gradient(
+    ellipse 80% 50% at 50% -10%,
+    rgb(79 70 229 / 0.12),
+    transparent 70%
+  );
+  background-attachment: fixed;
+}
+
+/* Visible focus for keyboard users on every interactive element. */
+:focus-visible {
+  outline: 2px solid rgb(129 140 248);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@layer components {
+  /* ---- surfaces ---- */
+  .fc-card {
+    @apply rounded-2xl border border-slate-800 bg-slate-900;
+  }
+  .fc-card-inset {
+    @apply rounded-xl border border-slate-800 bg-slate-950;
+  }
+
+  /* Section heading. One definition so every panel matches. */
+  .fc-heading {
+    @apply text-base font-semibold tracking-tight text-white;
+  }
+
+  /* Body copy. 14px is the floor; 11px body text was unreadable. */
+  .fc-body {
+    @apply text-sm leading-relaxed text-slate-400;
+  }
+
+  /* Small print. 12px, never smaller -- legible and still clearly secondary. */
+  .fc-meta {
+    @apply text-xs leading-relaxed text-slate-500;
+  }
+
+  /* ---- controls ---- */
+  .fc-btn {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-4
+           text-sm font-semibold transition-colors disabled:cursor-not-allowed
+           disabled:opacity-50;
+  }
+  .fc-btn-primary {
+    @apply fc-btn bg-indigo-500 text-white hover:bg-indigo-400;
+  }
+  .fc-btn-secondary {
+    @apply fc-btn border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800;
+  }
+  /* Quiet inline action. Still 36px tall so it is actually clickable. */
+  .fc-btn-ghost {
+    @apply inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2 text-xs
+           font-semibold text-slate-400 transition-colors hover:bg-slate-800
+           hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* ---- chips / pills ---- */
+  .fc-chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-slate-700
+           bg-slate-950 px-2.5 py-1 text-xs font-medium text-slate-400;
+  }
+  .fc-chip-accent {
+    @apply inline-flex items-center gap-1 rounded-full border border-indigo-500/25
+           bg-indigo-500/10 px-2.5 py-1 text-xs font-semibold text-indigo-300;
+  }
+
+  /* ---- notices ---- */
+  .fc-notice-error {
+    @apply flex items-start gap-2.5 rounded-xl border border-red-500/25
+           bg-red-500/10 p-4 text-sm leading-relaxed text-red-200;
+  }
+  .fc-notice-warn {
+    @apply flex items-start gap-2.5 rounded-xl border border-amber-500/25
+           bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-200;
+  }
+
+  /* A link that still meets a usable target size. */
+  .fc-link {
+    @apply inline-flex min-h-[32px] items-center text-sm font-medium text-indigo-400
+           underline-offset-4 transition-colors hover:text-indigo-300 hover:underline;
+  }
 }
 
 /* better-auth-ui renders light-mode surfaces by default; align them to the
    app's dark palette so the sign-in panel does not glare. */
 [data-better-auth-ui] {
   color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -33,28 +33,34 @@ export function AuthPanel({ onSignedIn }: { onSignedIn?: () => void }) {
         onSignedIn?.();
       }}
     >
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-        <div className="mb-4 flex items-center justify-between gap-4">
+      <section className="fc-card p-6">
+        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h2 className="text-sm font-bold tracking-tight text-white">
+            <h2 className="fc-heading">
               {mode === 'signup' ? 'Create your account' : 'Sign in'}
             </h2>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="fc-body mt-1">
               Sign in to keep render history and monthly quota. Free tier needs no card.
             </p>
           </div>
           <button
             type="button"
             onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}
-            className="shrink-0 text-[11px] font-semibold text-indigo-400 transition-colors hover:text-indigo-300"
+            className="fc-btn-ghost shrink-0 !text-indigo-400 hover:!text-indigo-300"
           >
             {mode === 'signup' ? 'Have an account? Sign in' : 'New here? Sign up'}
           </button>
         </div>
 
         {/* better-auth-ui ships its own card chrome; strip the outer border so
-            it nests cleanly inside this panel. */}
-        <div className="[&>div]:border-0 [&>div]:bg-transparent [&>div]:p-0 [&>div]:shadow-none">
+            it nests cleanly inside this panel.
+
+            It also renders its buttons and links at ~20px tall with 13px type,
+            which is both hard to read and under any usable tap target. The
+            library does not expose those styles as props, so they are pinned
+            from here. Deliberately broad: everything inside this wrapper is a
+            form control, and the audit that motivated this flagged all of it. */}
+        <div className="[&>div]:border-0 [&>div]:bg-transparent [&>div]:p-0 [&>div]:shadow-none [&_button]:min-h-[44px] [&_button]:text-sm [&_button]:font-semibold [&_a]:inline-flex [&_a]:min-h-[32px] [&_a]:items-center [&_label]:text-sm [&_input]:text-sm">
           {mode === 'signup' ? (
             <SignUpForm localization={AUTH_LOCALIZATION} />
           ) : (
