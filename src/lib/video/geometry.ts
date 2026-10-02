@@ -17,6 +17,38 @@ export const OUTPUT_CANVAS: Record<Ratio, { w: number; h: number }> = {
   '16:9': { w: 1920, h: 1080 },
 };
 
+/**
+ * Smaller canvas for crops that do not have 1080-class detail to begin with.
+ *
+ * A 9:16 crop of a 1080p landscape clip is only 608 px wide. Scaling it up to
+ * 1080x1920 adds no detail but makes the encoder process 2.25x the pixels -
+ * the single largest cost of a browser render. Platforms accept 720x1280 and
+ * upscale on playback, so the picture is the same and the render is faster.
+ */
+export const OUTPUT_CANVAS_720: Record<Ratio, { w: number; h: number }> = {
+  '9:16': { w: 720, h: 1280 },
+  '1:1': { w: 720, h: 720 },
+  '16:9': { w: 1280, h: 720 },
+};
+
+/** Crop short side, in source pixels, from which 1080-class output pays off. */
+const HD_SHORT_SIDE = 1000;
+
+/**
+ * The canvas to render `ratio` at for a source of the given displayed size:
+ * 1080-class when the crop really has that much detail, 720-class otherwise.
+ * Unknown dimensions fall back to 1080-class, the previous behaviour.
+ */
+export function outputCanvas(
+  ratio: Ratio,
+  srcW?: number | null,
+  srcH?: number | null,
+): { w: number; h: number } {
+  if (!srcW || !srcH) return OUTPUT_CANVAS[ratio];
+  const { cw, ch } = cropFor(srcW, srcH, ratio);
+  return Math.min(cw, ch) >= HD_SHORT_SIDE ? OUTPUT_CANVAS[ratio] : OUTPUT_CANVAS_720[ratio];
+}
+
 function aspect(r: Ratio): number {
   const { w, h } = OUTPUT_CANVAS[r];
   return w / h;
@@ -149,8 +181,12 @@ export function hasOffset(focus?: Partial<Focus> | null): boolean {
  * right, and the max() clamps the extremes. Omitting them when the focus is
  * centred keeps the common path byte-identical to the previous behaviour.
  */
-export function filterExpr(ratio: Ratio, focus?: Partial<Focus> | null): string {
-  const { w, h } = OUTPUT_CANVAS[ratio];
+export function filterExpr(
+  ratio: Ratio,
+  focus?: Partial<Focus> | null,
+  canvas: { w: number; h: number } = OUTPUT_CANVAS[ratio],
+): string {
+  const { w, h } = canvas;
   const t = aspect(ratio);
   // Comma inside min() must be escaped inside a filtergraph description.
   const cropW = `floor(min(iw\\,ih*${t})/2)*2`;

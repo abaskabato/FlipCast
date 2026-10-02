@@ -26,7 +26,7 @@ import ShareActions from './share-actions';
 import { renderToRatios, RenderAbortedError, type RenderedOutput } from '@/lib/video/ffmpeg-client';
 import {
   CENTER_FOCUS,
-  OUTPUT_CANVAS,
+  outputCanvas,
   type Focus,
   type Ratio,
 } from '@/lib/video/geometry';
@@ -318,6 +318,9 @@ export default function FlipcastDashboard() {
         // Manual crop is the only mode that moves the window; the others keep
         // centred framing so this stays undefined for them.
         focus: trackingMode === 'manual_crop' ? focus : null,
+        // Lets the engine size outputs to the source and copy instead of
+        // re-encoding where the output would be identical.
+        source: meta,
         onProgress: ({ progress: p, label }) => {
           setProgress(p);
           setPhase(label);
@@ -618,7 +621,7 @@ export default function FlipcastDashboard() {
           <div className="grid gap-2">
             {RATIO_OPTIONS.map((ratio) => {
               const active = targets.includes(ratio.id);
-              const canvas = OUTPUT_CANVAS[ratio.id];
+              const canvas = outputCanvas(ratio.id, meta?.width, meta?.height);
               return (
                 <button
                   key={ratio.id}

@@ -76,7 +76,13 @@ function parseMp4(view) {
     if (base + 8 > dv.byteLength) continue;
     const w = dv.getUint32(base) / 65536;
     const h = dv.getUint32(base + 4) / 65536;
-    if (w > 0 && h > 0) { width = w; height = h; break; }
+    if (w > 0 && h > 0) {
+      // Quarter-turn rotation in the track matrix (phone portrait video).
+      const quarterTurn = dv.getInt32(base - 36) === 0 && dv.getInt32(base - 20) === 0;
+      width = quarterTurn ? h : w;
+      height = quarterTurn ? w : h;
+      break;
+    }
   }
   if (!width || !height) return null;
   return { durationSeconds, width: Math.round(width), height: Math.round(height) };
@@ -88,6 +94,9 @@ const CASES = [
   { name: 'portrait', args: ['-f','lavfi','-i','testsrc2=s=1080x1920:d=2:r=30','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart'], ext: 'mp4' },
   { name: 'mov-container', args: ['-f','lavfi','-i','testsrc2=s=1920x1080:d=4:r=30','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p'], ext: 'mov' },
   { name: 'longer-clip', args: ['-f','lavfi','-i','testsrc2=s=1280x720:d=90:r=30','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-movflags','+faststart'], ext: 'mp4' },
+  // Phone portrait: landscape frames plus a 90 degree display matrix. ffmpeg
+  // reports the stored size, so the displayed size is stated explicitly.
+  { name: 'phone-rotated-90', args: ['-f','lavfi','-i','testsrc2=s=1920x1080:d=3:r=30','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p'], ext: 'mp4', rotate: 90, expectDims: '1080x1920' },
   { name: 'with-audio', args: ['-f','lavfi','-i','testsrc2=s=854x480:d=6:r=30','-f','lavfi','-i','sine=frequency=440:duration=6','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest','-movflags','+faststart'], ext: 'mp4' },
 ];
 
@@ -95,7 +104,13 @@ let pass = 0, fail = 0;
 for (const c of CASES) {
   const f = path.join(work, `${c.name}.${c.ext}`);
   run(['-y', ...c.args, f]);
+  if (c.rotate) {
+    const rotated = f.replace(/\.(\w+)$/, '-rot.$1');
+    run(['-y', '-display_rotation', String(c.rotate), '-i', f, '-c', 'copy', rotated]);
+    run(['-y', '-i', rotated, '-c', 'copy', f]);
+  }
   const truth = ffmpegTruth(f);
+  if (c.expectDims) truth.dims = c.expectDims;
   const buf = readFileSync(f);
   const parsed = parseMp4(new DataView(buf.buffer, buf.byteOffset, buf.byteLength));
 

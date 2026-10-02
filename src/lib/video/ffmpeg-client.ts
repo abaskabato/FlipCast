@@ -16,7 +16,7 @@
  */
 
 import { loadFFmpegClass, type FFmpegInstance } from './ffmpeg-loader';
-import { filterExpr, OUTPUT_CANVAS, type Focus, type Ratio } from './geometry';
+import { filterExpr, outputCanvas, type Focus, type Ratio } from './geometry';
 
 /** Core assets are served from /public (see scripts/sync-ffmpeg-core.mjs). */
 const CORE_BASE = '/ffmpeg';
@@ -162,15 +162,46 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
   return new Uint8Array(await file.arrayBuffer());
 }
 
+/** What the render engine knows about the source, from probe.ts. */
+export type SourceInfo = {
+  width: number;
+  height: number;
+  codec?: string;
+  h264Profile?: number;
+};
+
+const VIDEO_ENCODE = [
+  '-c:v',
+  'libx264',
+  // veryfast is the measured sweet spot for WASM: ultrafast is ~1.5x quicker
+  // again but visibly softer on detailed footage.
+  '-preset',
+  'veryfast',
+  '-crf',
+  '23',
+  '-pix_fmt',
+  'yuv420p',
+];
+// `?` makes the audio map optional, so silent sources still render.
+const AUDIO = ['-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-ac', '2'];
+
 /**
- * Transcode one source file into every requested ratio.
+ * Transcode one source file into every requested ratio, in a single pass.
+ *
+ * The source is decoded once and split to one encoder per format; decoding is
+ * roughly a quarter of the work on 1080p footage, so separate passes per format
+ * paid that cost again for every extra output. Each output is sized to the
+ * detail its crop really has (geometry.outputCanvas), and an output that would
+ * reproduce an ordinary H.264 source exactly is stream-copied, not re-encoded.
  *
  * Framing uses dimension-free FFmpeg crop expressions (see geometry.filterExpr),
- * so there is no probe step and no chance of cropping against a wrong assumption.
+ * so the crop always matches the real decoded frame.
  *
- * `focus` shifts the crop window for every output. It is expressed in fractions
- * of the source frame, so the same value means the same thing on a phone clip and
- * a 4K one. Omit it (or pass the centre) for the default centred framing.
+ * `focus` shifts the crop window for every output, in fractions of the source
+ * frame. Omit it (or pass the centre) for the default centred framing.
+ *
+ * `source` is optional: without it every output renders at 1080-class and
+ * nothing is copied, which is always correct, just slower.
  */
 export async function renderToRatios(
   file: File,
@@ -180,6 +211,7 @@ export async function renderToRatios(
     onLog?: (line: string) => void;
     signal?: AbortSignal;
     focus?: Focus | null;
+    source?: SourceInfo | null;
   } = {},
 ): Promise<RenderResult> {
   if (ratios.length === 0) throw new Error('No output formats requested.');
@@ -189,85 +221,47 @@ export async function renderToRatios(
   const startedAt = performance.now();
 
   const srcName = `in-${Date.now()}.${extensionFor(file.name)}`;
-  const outputs: RenderedOutput[] = [];
+  const plan = planRender(ratios, opts.source);
+  const formats = ratios.length === 1 ? ratios[0] : `${ratios.length} formats`;
 
-  // FFmpeg runs one job at a time; map its 0..1 onto the multi-output total.
-  let currentIndex = 0;
   // Unsubscribe in `finally` so a reused engine instance does not accumulate
   // listeners across renders. Typed callback is required by ffmpeg's `off()`.
   const onProgress = ({ progress }: { progress: number }) => {
     const p = Math.min(1, Math.max(0, progress));
-    opts.onProgress?.({
-      progress: (currentIndex + p) / ratios.length,
-      label: `Rendering ${ratios[currentIndex]} · ${Math.round(p * 100)}%`,
-      ratio: ratios[currentIndex],
-    });
+    opts.onProgress?.({ progress: 0.05 + p * 0.95, label: `Rendering ${formats} · ${Math.round(p * 100)}%` });
   };
   ffmpeg.on('progress', onProgress);
 
-  // exec() cannot be interrupted, so cancelling mid-output means tearing the
+  // exec() cannot be interrupted, so cancelling mid-render means tearing the
   // worker down. The next render reloads the core (from the HTTP cache).
   const onAbort = () => void disposeEngine();
   opts.signal?.addEventListener('abort', onAbort, { once: true });
 
+  const outputs: RenderedOutput[] = [];
   try {
     opts.onProgress?.({ progress: 0.02, label: 'Reading video into memory…' });
     await ffmpeg.writeFile(srcName, await readFileBytes(file));
+    if (opts.signal?.aborted) throw new RenderAbortedError();
+    opts.onProgress?.({ progress: 0.05, label: `Rendering ${formats}…` });
 
-    for (let i = 0; i < ratios.length; i++) {
-      if (opts.signal?.aborted) throw new RenderAbortedError();
-      currentIndex = i;
-      const ratio = ratios[i];
-      opts.onProgress?.({ progress: i / ratios.length, label: `Rendering ${ratio}…`, ratio });
+    await ffmpeg.exec(buildArgs(srcName, plan, opts.focus));
+    if (opts.signal?.aborted) throw new RenderAbortedError();
 
-      const outName = `out-${i}-${ratio.replace(':', 'x')}.mp4`;
-
-      await ffmpeg.exec([
-        '-i',
-        srcName,
-        '-vf',
-        filterExpr(ratio, opts.focus),
-        '-c:v',
-        'libx264',
-        '-preset',
-        // A sane speed/quality point for WASM: veryfast keeps turnaround
-        // tolerable while staying widely compatible.
-        'veryfast',
-        '-crf',
-        '23',
-        '-pix_fmt',
-        'yuv420p',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '128k',
-        '-ac',
-        '2',
-        '-movflags',
-        '+faststart',
-        outName,
-      ]);
-
-      if (opts.signal?.aborted) throw new RenderAbortedError();
-
-      const data = (await ffmpeg.readFile(outName)) as Uint8Array;
+    for (const item of plan) {
+      const data = (await ffmpeg.readFile(item.outName)) as Uint8Array;
+      await ffmpeg.deleteFile(item.outName).catch(() => undefined);
       if (data.byteLength === 0) {
-        throw new Error(`Rendering ${ratio} produced an empty file.`);
+        throw new Error(`Rendering ${item.ratio} produced an empty file.`);
       }
       const blob = new Blob([data as unknown as BlobPart], { type: 'video/mp4' });
-      const canvas = OUTPUT_CANVAS[ratio];
       outputs.push({
-        ratio,
-        width: canvas.w,
-        height: canvas.h,
+        ratio: item.ratio,
+        width: item.canvas.w,
+        height: item.canvas.h,
         blob,
         sizeBytes: blob.size,
-        filename: `${baseName(file.name)}_${ratio.replace(':', 'x')}.mp4`,
+        filename: `${baseName(file.name)}_${item.ratio.replace(':', 'x')}.mp4`,
       });
-
-      // Free WASM memory between outputs; a dual-format job would otherwise
-      // hold both renders plus the source at once.
-      await ffmpeg.deleteFile(outName);
     }
   } catch (e) {
     // A terminated worker rejects with its own error; report it as a cancel.
@@ -288,4 +282,61 @@ export async function renderToRatios(
   }
 
   return { outputs, elapsedSeconds: (performance.now() - startedAt) / 1000 };
+}
+
+type PlannedOutput = {
+  ratio: Ratio;
+  canvas: { w: number; h: number };
+  /** Stream-copy the source video instead of re-encoding it. */
+  copy: boolean;
+  outName: string;
+};
+
+/** Decide size and copy-vs-encode per output. Pure, so the UI can show it. */
+export function planRender(ratios: Ratio[], source?: SourceInfo | null): PlannedOutput[] {
+  return ratios.map((ratio, i) => {
+    const canvas = outputCanvas(ratio, source?.width, source?.height);
+    return {
+      ratio,
+      canvas,
+      copy: canStreamCopy(source, canvas),
+      outName: `out-${i}-${ratio.replace(':', 'x')}.mp4`,
+    };
+  });
+}
+
+/**
+ * True when re-encoding would only reproduce the source: same displayed size
+ * as the output canvas (so no crop and no scale, and focus is irrelevant), and
+ * an 8-bit H.264 profile every platform accepts as-is.
+ */
+function canStreamCopy(source: SourceInfo | null | undefined, canvas: { w: number; h: number }): boolean {
+  if (!source || source.width !== canvas.w || source.height !== canvas.h) return false;
+  if (source.codec !== 'avc1' && source.codec !== 'avc3') return false;
+  // Baseline, Main, High. Excludes High 10 / 4:2:2 / 4:4:4, which some
+  // platforms and phones reject.
+  return source.h264Profile === 66 || source.h264Profile === 77 || source.h264Profile === 100;
+}
+
+/** One ffmpeg invocation: decode once, split to every encoded output. */
+export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus | null): string[] {
+  const encoded = plan.filter((p) => !p.copy);
+  const args = ['-i', srcName];
+
+  if (encoded.length > 0) {
+    const branches = encoded.map((_, i) => `[s${i}]`).join('');
+    const graph = [
+      encoded.length > 1 ? `[0:v]split=${encoded.length}${branches}` : null,
+      ...encoded.map((p, i) => `${encoded.length > 1 ? `[s${i}]` : '[0:v]'}${filterExpr(p.ratio, focus, p.canvas)}[v${i}]`),
+    ].filter(Boolean);
+    args.push('-filter_complex', graph.join(';'));
+  }
+
+  for (const p of plan) {
+    const video = p.copy
+      ? ['-map', '0:v:0', '-c:v', 'copy']
+      : ['-map', `[v${encoded.indexOf(p)}]`, ...VIDEO_ENCODE];
+    args.push(...video, ...AUDIO, '-movflags', '+faststart', p.outName);
+  }
+  return args;
 }

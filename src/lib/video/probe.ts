@@ -18,17 +18,20 @@ export type VideoMeta = {
   durationSeconds: number;
   width: number;
   height: number;
+  /**
+   * Video sample-entry fourcc (avc1, hvc1, ...), when the container could be
+   * parsed. Unknown for formats read through the <video> fallback.
+   */
+  codec?: string;
+  /** H.264 profile_idc from avcC (66 Baseline, 77 Main, 100 High, ...). */
+  h264Profile?: number;
 };
+
+const VIDEO_FOURCCS = new Set(['avc1', 'avc3', 'hvc1', 'hev1', 'vp09', 'av01', 'mp4v', 'ap4h', 'apcn', 'apch']);
 
 const PROBE_TIMEOUT_MS = 20_000;
 /** Containers to inspect directly. Others fall through to <video>. */
 const PARSEABLE_EXT = /\.(mp4|m4v|mov|qt|m4a)$/i;
-
-/** Read the first `bytes` of a File without loading the whole thing. */
-async function readHead(file: File, bytes: number): Promise<DataView> {
-  const buf = await file.slice(0, bytes).arrayBuffer();
-  return new DataView(buf);
-}
 
 /**
  * Parse `moov` → `mvhd` (duration) and the first video `trak` → `tkhd`
@@ -51,6 +54,7 @@ function parseMp4(view: DataView): VideoMeta | null {
   // of 0, and taking it would report a 0x0 frame.
   let mvhdPos: number | undefined;
   const tkhdPositions: number[] = [];
+  const stsdPositions: number[] = [];
 
   const walk = (start: number, end: number, depth: number): void => {
     let pos = start;
@@ -78,6 +82,8 @@ function parseMp4(view: DataView): VideoMeta | null {
         mvhdPos ??= pos;
       } else if (type === 'tkhd') {
         tkhdPositions.push(pos);
+      } else if (type === 'stsd') {
+        stsdPositions.push(pos);
       }
 
       pos += size;
@@ -120,8 +126,15 @@ function parseMp4(view: DataView): VideoMeta | null {
     const w = dv.getUint32(dimBase) / 65536;
     const h = dv.getUint32(dimBase + 4) / 65536;
     if (w > 0 && h > 0) {
-      width = w;
-      height = h;
+      // Phones record portrait video as a landscape frame plus a rotation in
+      // the track matrix (the 36 bytes before width). ffmpeg applies it when
+      // decoding, so report the displayed shape: for a 90/270 degree turn the
+      // matrix diagonal is zero and width/height swap.
+      const a = dv.getInt32(dimBase - 36);
+      const d = dv.getInt32(dimBase - 36 + 16);
+      const quarterTurn = a === 0 && d === 0;
+      width = quarterTurn ? h : w;
+      height = quarterTurn ? w : h;
       break;
     }
   }
@@ -131,34 +144,82 @@ function parseMp4(view: DataView): VideoMeta | null {
     durationSeconds,
     width: Math.round(width),
     height: Math.round(height),
+    ...videoCodecOf(dv, stsdPositions),
   };
 }
 
 /**
- * moov is often at the end of a file (not "fast start"), so scan the head for
- * it and, failing that, try a larger window.
+ * The video codec, from the first sample description that names one.
+ *
+ * stsd is a full box: header(8) + version/flags(4) + entry_count(4), then the
+ * first sample entry, whose own header carries the fourcc. For H.264 the
+ * profile is read from the avcC child so callers can tell an ordinary 8-bit
+ * stream (safe to copy into any platform) from 10-bit or 4:2:2 variants.
  */
-async function probeMp4(file: File): Promise<VideoMeta | null> {
-  // 4MB covers the common case; fall back to the whole file only if small.
-  const windows = [4 * 1024 * 1024, 32 * 1024 * 1024];
-  for (const size of windows) {
-    if (file.size <= size) {
-      try {
-        const parsed = parseMp4(await readHead(file, file.size));
-        if (parsed) return parsed;
-      } catch {
-        return null;
-      }
-      return null;
+function videoCodecOf(dv: DataView, stsdPositions: number[]): Pick<VideoMeta, 'codec' | 'h264Profile'> {
+  const fourcc = (at: number) =>
+    String.fromCharCode(dv.getUint8(at), dv.getUint8(at + 1), dv.getUint8(at + 2), dv.getUint8(at + 3));
+  for (const stsd of stsdPositions) {
+    const entry = stsd + 16;
+    if (entry + 8 > dv.byteLength) continue;
+    const codec = fourcc(entry + 4);
+    if (!VIDEO_FOURCCS.has(codec)) continue;
+    if (codec !== 'avc1' && codec !== 'avc3') return { codec };
+    // avcC sits among the sample entry's children; scan its extent for it.
+    const end = Math.min(dv.byteLength - 10, entry + dv.getUint32(entry));
+    for (let at = entry + 8; at < end; at++) {
+      if (fourcc(at) === 'avcC') return { codec, h264Profile: dv.getUint8(at + 5) };
     }
-    try {
-      const parsed = parseMp4(await readHead(file, size));
-      if (parsed) return parsed;
-    } catch {
-      // truncated window: fall through to next
+    return { codec };
+  }
+  return {};
+}
+
+/** Largest `moov` we will read. Real ones are KBs to a few MB, even for long clips. */
+const MAX_MOOV_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Find the top-level `moov` box by hopping box headers, then read only it.
+ *
+ * Cameras and phones usually write `moov` *after* the media data, i.e. at the
+ * end of a file that can be hundreds of MB. Reading a fixed window from the
+ * head misses it, and the <video> fallback then fails wherever the browser
+ * cannot decode the codec (HEVC in most of Firefox and Chrome) - even though
+ * the WASM engine could render the file fine. Top-level boxes are few (ftyp,
+ * free, mdat, moov, ...), so this costs a handful of 16-byte reads plus the
+ * moov itself, regardless of file size.
+ */
+async function readMoov(file: File): Promise<DataView | null> {
+  let pos = 0;
+  for (let hops = 0; hops < 64 && pos + 8 <= file.size; hops++) {
+    const head = new DataView(await file.slice(pos, pos + 16).arrayBuffer());
+    let size = head.getUint32(0);
+    const type = String.fromCharCode(head.getUint8(4), head.getUint8(5), head.getUint8(6), head.getUint8(7));
+    if (size === 1) {
+      if (head.byteLength < 16) return null;
+      size = head.getUint32(8) * 2 ** 32 + head.getUint32(12);
+    } else if (size === 0) {
+      size = file.size - pos; // runs to end of file
     }
+    if (size < 8) return null; // corrupt
+    if (type === 'moov') {
+      if (size > MAX_MOOV_BYTES) return null;
+      return new DataView(await file.slice(pos, pos + size).arrayBuffer());
+    }
+    pos += size;
   }
   return null;
+}
+
+async function probeMp4(file: File): Promise<VideoMeta | null> {
+  try {
+    const moov = await readMoov(file);
+    // parseMp4 walks from offset 0 and descends into `moov`, so the box on its
+    // own parses exactly as it would inside the whole file.
+    return moov ? parseMp4(moov) : null;
+  } catch {
+    return null;
+  }
 }
 
 function probeWithVideoElement(file: File): Promise<VideoMeta> {
