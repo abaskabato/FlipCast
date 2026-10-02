@@ -52,7 +52,7 @@ try {
 
   // ---- 1. signup ----
   const email = `e2e${Date.now()}@flipcast.test`;
-  await page.getByRole('button', { name: /sign up/i }).first().click();
+  await page.getByRole('button', { name: /create a free account/i }).first().click();
   await page.waitForTimeout(800);
   await page.locator('input[name=name]').fill('E2E User');
   await page.locator('input[type=email]').fill(email);

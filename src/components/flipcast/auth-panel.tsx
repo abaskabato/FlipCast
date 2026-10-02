@@ -8,6 +8,7 @@ import {
 } from '@daveyplate/better-auth-ui';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth-client';
+import { formatQuota, TIER_LIMITS } from '@/lib/quotas';
 
 /**
  * The forms require an explicit `localization` prop. Reuse the library's own
@@ -37,22 +38,15 @@ export function AuthPanel({ onSignedIn }: { onSignedIn?: () => void }) {
       }}
     >
       <section className="fc-card p-6">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 className="fc-heading">
-              {mode === 'signup' ? 'Create your account' : 'Sign in'}
-            </h2>
-            <p className="fc-body mt-1">
-              Sign in to keep render history and monthly quota. Free tier needs no card.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}
-            className="fc-btn-ghost shrink-0 !text-indigo-400 hover:!text-indigo-300"
-          >
-            {mode === 'signup' ? 'Have an account? Sign in' : 'New here? Sign up'}
-          </button>
+        <div className="mb-5">
+          <h2 className="fc-heading">
+            {mode === 'signup' ? 'Create your free account' : 'Sign in to render'}
+          </h2>
+          <p className="fc-body mt-1">
+            {mode === 'signup'
+              ? `${formatQuota(TIER_LIMITS.free)} of rendering a month, free. No card needed.`
+              : 'Your account keeps your render history and monthly allowance.'}
+          </p>
         </div>
 
         {/* better-auth-ui ships its own card chrome; strip the outer border so
@@ -70,6 +64,19 @@ export function AuthPanel({ onSignedIn }: { onSignedIn?: () => void }) {
             <SignInForm localization={AUTH_LOCALIZATION} />
           )}
         </div>
+
+        {/* The mode switch sits under the form, where people look for it,
+            instead of competing with the heading for width. */}
+        <p className="mt-4 border-t border-slate-800 pt-4 text-center text-sm text-slate-400">
+          {mode === 'signup' ? 'Already have an account?' : 'New to Flipcast?'}{' '}
+          <button
+            type="button"
+            onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}
+            className="fc-link"
+          >
+            {mode === 'signup' ? 'Sign in' : 'Create a free account'}
+          </button>
+        </p>
       </section>
     </AuthUIProvider>
   );

@@ -45,6 +45,22 @@ export async function setStripeCustomerId(userId: string, customerId: string): P
     .where(eq(userTable.id, userId));
 }
 
+/** A user's billing state as stored, read fresh rather than from the session. */
+export async function getBillingState(
+  userId: string,
+): Promise<{ tier: string; customerId: string | null } | null> {
+  const rows = await db
+    .select({ tier: userTable.subscriptionTier, customerId: userTable.stripeCustomerId })
+    .from(userTable)
+    .where(eq(userTable.id, userId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getStripeCustomerId(userId: string): Promise<string | null> {
+  return (await getBillingState(userId))?.customerId ?? null;
+}
+
 /** Find a user by the Stripe customer ID stored at checkout time. */
 export async function findUserByCustomerId(customerId: string): Promise<string | null> {
   const rows = await db

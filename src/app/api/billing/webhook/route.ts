@@ -5,6 +5,7 @@ import { stripe } from '@/lib/billing/stripe';
 import {
   findUserByCustomerId,
   resetUsageWindow,
+  setStripeCustomerId,
   setUserTier,
   tierForPrice,
 } from '@/lib/billing/sync';
@@ -71,7 +72,14 @@ export async function POST(request: Request) {
         const session = event.data.object as Stripe.Checkout.Session;
         const userId = session.client_reference_id ?? session.metadata?.userId;
         const tier = session.metadata?.tier;
-        if (userId && tier) {
+        if (userId) {
+          // The customer only exists once checkout completes, so this is where
+          // its id is first known. The portal and repeat checkouts need it.
+          const customerId =
+            typeof session.customer === 'string' ? session.customer : session.customer?.id;
+          if (customerId) await setStripeCustomerId(userId, customerId);
+        }
+        if (userId && (tier === 'creator' || tier === 'agency')) {
           await setUserTier(userId, tier);
           await resetUsageWindow(userId);
         }

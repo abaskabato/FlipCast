@@ -1,6 +1,8 @@
 import 'server-only';
 import Stripe from 'stripe';
 
+import type { BillingPeriod } from './plans';
+
 /**
  * Stripe access.
  *
@@ -25,8 +27,7 @@ export const PLAN_IDS = {
   },
 } as const;
 
-export type PaidTier = keyof typeof PLAN_IDS;
-export type BillingPeriod = 'monthly' | 'yearly';
+export type { BillingPeriod, PaidTier } from './plans';
 
 let cached: Stripe | null | undefined;
 
@@ -84,9 +85,3 @@ export function unavailableReason(): string {
   }
   return 'This plan cannot be purchased right now.';
 }
-
-/** Customer-facing price display, kept out of the components. */
-export const PLAN_DISPLAY: Record<PaidTier, { name: string; blurb: string; minutes: number }> = {
-  creator: { name: 'Creator', blurb: 'For one channel, every week.', minutes: 60 },
-  agency: { name: 'Agency', blurb: 'For teams shipping client work.', minutes: 240 },
-};

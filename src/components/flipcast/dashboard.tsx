@@ -16,7 +16,9 @@ import {
   ShieldCheck,
   HardDrive,
   Clock,
+  CreditCard,
 } from 'lucide-react';
+import Link from 'next/link';
 
 import { authClient, useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
@@ -30,6 +32,9 @@ import {
 } from '@/lib/video/geometry';
 import { probeVideo, formatBytes, type VideoMeta } from '@/lib/video/probe';
 import { BROWSER_MAX_INPUT_BYTES, formatDuration, formatQuota } from '@/lib/quotas';
+import { openBillingPortal, startCheckout } from '@/lib/billing/client';
+import { isBillingPeriod, isPaidTier } from '@/lib/billing/plans';
+import { SiteFooter } from './site-chrome';
 
 type TargetRatio = Ratio;
 type TrackingMode = 'auto_center' | 'smart_face' | 'manual_crop';
@@ -81,23 +86,26 @@ export default function FlipcastDashboard() {
   const signedIn = Boolean(session?.user);
 
   // ---- usage ------------------------------------------------------------
-  const loadUsage = useCallback(async () => {
+  const loadUsage = useCallback(async (): Promise<Usage | null> => {
     if (!signedIn) {
       setUsage(null);
-      return;
+      return null;
     }
     try {
       const res = await fetch('/api/me/usage');
-      if (!res.ok) return;
+      if (!res.ok) return null;
       const data = await res.json();
-      setUsage({
+      const next: Usage = {
         tier: data.tier,
         usedSeconds: data.usedSeconds,
         limitSeconds: data.limitSeconds,
         remainingSeconds: data.remainingSeconds,
-      });
+      };
+      setUsage(next);
+      return next;
     } catch {
       // usage is non-critical; rendering still works
+      return null;
     }
   }, [signedIn]);
 
@@ -105,69 +113,70 @@ export default function FlipcastDashboard() {
     void loadUsage();
   }, [loadUsage]);
 
-  // ---- billing ----------------------------------------------------------
-  /**
-   * Send the user to Stripe Checkout.
-   *
-   * `?plan=` lets the caller choose a tier; the default is Creator, which is the
-   * plan most people upgrading from the free tier want.
-   *
-   * A 503 is the expected response while billing is unconfigured (no Stripe
-   * keys), so surface the server's reason rather than a generic failure. The
-   * free allowance keeps working either way.
-   */
-  const openUpgrade = useCallback(async () => {
+  // ---- billing ----
+  const openPortal = useCallback(async () => {
     setCheckoutBusy(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const tier = params.get('plan') === 'agency' ? 'agency' : 'creator';
-      const res = await fetch('/api/billing/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier, period: 'monthly' }),
-      });
-
-      if (!res.ok) {
-        let message = 'Could not start checkout. Please try again.';
-        try {
-          const data = await res.json();
-          if (typeof data?.message === 'string') message = data.message;
-        } catch {
-          // keep the default message
-        }
-        setNotice(message);
-        return;
-      }
-
-      const { url } = (await res.json()) as { url?: string };
-      if (!url) {
-        setNotice('Checkout did not return a link. Please try again.');
-        return;
-      }
-      // Full navigation so the session cookie is sent to Stripe and back.
-      window.location.href = url;
-    } catch {
-      setNotice('Could not reach the server to start checkout.');
-    } finally {
-      setCheckoutBusy(false);
-    }
+    const outcome = await openBillingPortal();
+    if (outcome.kind === 'message') setNotice(outcome.message);
+    setCheckoutBusy(false);
   }, []);
 
-  // After returning from Stripe, re-read usage so the new tier and the reset
-  // window appear immediately instead of after a manual refresh.
+  // Resume a checkout chosen on /pricing before the user had signed in.
+  // `?plan=` survives the sign-in because auth happens in place on this page.
+  const checkoutResumed = useRef(false);
+  useEffect(() => {
+    if (!signedIn || checkoutResumed.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const tier = params.get('plan');
+    if (!isPaidTier(tier)) return;
+    const period = params.get('period');
+    checkoutResumed.current = true;
+    window.history.replaceState({}, '', window.location.pathname);
+    setCheckoutBusy(true);
+    setNotice('Taking you to checkout…');
+    void startCheckout(tier, isBillingPeriod(period) ? period : 'monthly').then((outcome) => {
+      if (outcome.kind === 'message') setNotice(outcome.message);
+      if (outcome.kind !== 'redirected') setCheckoutBusy(false);
+    });
+  }, [signedIn]);
+
+  // Back from Stripe. The tier is written by the webhook, which can land a few
+  // seconds after the redirect, so poll briefly rather than show a stale plan.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('upgraded') === '1') {
-      setNotice('Payment received. Your plan updates as soon as Stripe confirms it.');
-      void loadUsage();
-      // Drop the query string so a refresh does not re-trigger this.
-      window.history.replaceState({}, '', window.location.pathname);
-    } else if (params.get('cancelled') === '1') {
+    if (params.get('cancelled') === '1') {
       setNotice('Checkout cancelled — nothing was charged.');
       window.history.replaceState({}, '', window.location.pathname);
+      return;
     }
-  }, [loadUsage]);
+    if (params.get('upgraded') !== '1' || !signedIn) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    setNotice('Payment received — activating your plan…');
+    let cancelled = false;
+    void (async () => {
+      for (let i = 0; i < 15 && !cancelled; i++) {
+        const u = await loadUsage();
+        if (u && u.tier !== 'free') {
+          setNotice(`You're on ${u.tier[0].toUpperCase()}${u.tier.slice(1)}. Thanks for subscribing!`);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (!cancelled) {
+        setNotice('Payment received. Your plan will appear shortly — refresh in a minute.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn, loadUsage]);
+
+  /** Bring the account panel into view and put the cursor in it. */
+  const focusAccount = useCallback(() => {
+    const panel = document.getElementById('account');
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => panel?.querySelector<HTMLInputElement>('input')?.focus(), 350);
+  }, []);
 
   // ---- file selection ---------------------------------------------------
   const acceptFile = useCallback(
@@ -217,11 +226,11 @@ export default function FlipcastDashboard() {
 
   // ---- render -----------------------------------------------------------
   const startRender = useCallback(async () => {
-    if (!file || !meta || isRendering) return;
     if (!signedIn) {
-      setError('Sign in to render. It is free and needs no card.');
+      focusAccount();
       return;
     }
+    if (!file || !meta || isRendering) return;
     if (targets.length === 0) {
       setError('Pick at least one output format.');
       return;
@@ -325,7 +334,7 @@ export default function FlipcastDashboard() {
       setIsRendering(false);
       abortRef.current = null;
     }
-  }, [file, meta, isRendering, signedIn, targets, trackingMode, focus, usage, loadUsage]);
+  }, [file, meta, isRendering, signedIn, targets, trackingMode, focus, usage, loadUsage, focusAccount]);
 
   const cancelRender = useCallback(() => {
     abortRef.current?.abort();
@@ -387,48 +396,92 @@ export default function FlipcastDashboard() {
     : 0;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-1 py-2 sm:px-2">
       {/* Header */}
-      <header className="fc-card p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-indigo-600 p-2.5 text-white shadow-lg shadow-indigo-600/20">
-              <Layers className="h-6 w-6" />
-            </div>
-            <div>
-              <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold tracking-tight text-white">
-                Flipcast
-                <span className="fc-chip-accent">local render</span>
-              </h1>
-              <p className="fc-meta mt-0.5">
-                {sessionPending
-                  ? 'Checking session…'
-                  : signedIn
-                    ? (session?.user?.email ?? '')
-                    : 'One clip in, every platform out'}
-              </p>
-            </div>
+      <header className="flex items-center justify-between gap-4">
+        <Link href="/" className="flex items-center gap-2.5" aria-label="Flipcast home">
+          <span className="rounded-xl bg-indigo-600 p-2 text-white shadow-lg shadow-indigo-600/25">
+            <Layers className="h-5 w-5" />
+          </span>
+          <span className="text-lg font-bold tracking-tight text-white">Flipcast</span>
+        </Link>
+
+        <nav className="flex items-center gap-1 sm:gap-2">
+          <Link href="/pricing" className="fc-btn-ghost !text-sm">
+            Pricing
+          </Link>
+          {signedIn ? (
+            <>
+              <span
+                className="hidden max-w-[14rem] truncate px-2 text-sm text-slate-400 md:inline"
+                title={session?.user?.email ?? ''}
+              >
+                {session?.user?.email}
+              </span>
+              <button onClick={() => authClient.signOut()} className="fc-btn-ghost !text-sm">
+                Sign out
+              </button>
+            </>
+          ) : (
+            !sessionPending && (
+              <button onClick={focusAccount} className="fc-btn-secondary !min-h-[36px] !px-3">
+                Sign in
+              </button>
+            )
+          )}
+        </nav>
+      </header>
+
+      {/* Pitch for first-time visitors. Signed-in users go straight to work. */}
+      {!sessionPending && !signedIn && (
+        <section className="grid items-center gap-8 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:py-8">
+          <div>
+            <p className="fc-chip-accent !border-emerald-500/25 !bg-emerald-500/10 !text-emerald-300">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Your footage never leaves your device
+            </p>
+            <h1 className="mt-4 max-w-xl text-4xl font-bold leading-[1.1] tracking-tight text-white sm:text-5xl">
+              One clip in. Every platform out.
+            </h1>
+            <p className="mt-4 max-w-lg text-base leading-relaxed text-slate-400">
+              Turn a horizontal video into vertical, square and widescreen cuts for TikTok,
+              Reels, Shorts and YouTube — rendered right here in your browser. No uploads, no
+              queue.
+            </p>
+            <ol className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-300">
+              {['Drop a video', 'Pick formats & framing', 'Download'].map((step, i) => (
+                <li key={step} className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-indigo-300">
+                    {i + 1}
+                  </span>
+                  {step}
+                </li>
+              ))}
+            </ol>
           </div>
 
-          {signedIn ? (
-            <button
-              onClick={() => authClient.signOut()}
-              className="fc-btn-ghost self-start"
-            >
-              Sign out
-            </button>
-          ) : (
-            <div className="fc-chip-accent self-start !border-emerald-500/25 !bg-emerald-500/10 !text-emerald-300">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Nothing leaves your device
-            </div>
-          )}
-        </div>
-      </header>
+          {/* The three output shapes, to scale, so the product reads at a glance. */}
+          <div aria-hidden="true" className="hidden items-end gap-3 md:flex">
+            {[
+              { label: '9:16', w: 72, h: 128 },
+              { label: '1:1', w: 104, h: 104 },
+              { label: '16:9', w: 168, h: 94.5 },
+            ].map((f) => (
+              <div key={f.label} className="flex flex-col items-center gap-2">
+                <div
+                  className="rounded-lg border border-indigo-400/40 bg-gradient-to-br from-indigo-500/25 via-slate-900 to-slate-900 shadow-lg shadow-indigo-500/10"
+                  style={{ width: f.w, height: f.h }}
+                />
+                <span className="font-mono text-xs text-slate-500">{f.label}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
         {/* Work column: the render pipeline, in order. */}
-        <div className="order-2 space-y-6 lg:order-1">
+        <div className="space-y-6">
       {/* Upload */}
       <div
         onDragEnter={(e) => {
@@ -653,7 +706,7 @@ export default function FlipcastDashboard() {
       ) : (
         <button
           onClick={startRender}
-          disabled={!file || !meta || targets.length === 0}
+          disabled={signedIn && (!file || !meta || targets.length === 0)}
           className="group flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
         >
           {signedIn ? 'Render on this device' : 'Sign in to render'}
@@ -712,18 +765,19 @@ export default function FlipcastDashboard() {
 
       </div>
 
-        {/* Sidebar: account and quota. Sticky so the meter stays visible while
-            the user scrolls through format options. */}
-        <aside className="order-1 space-y-4 lg:order-2 lg:sticky lg:top-6">
+        {/* Sidebar: account and plan. Below the work on mobile, so the first
+            screen is the product rather than a form; sticky on desktop so the
+            meter stays visible while scrolling through options. */}
+        <aside id="account" className="scroll-mt-6 space-y-4 lg:sticky lg:top-6">
           {!sessionPending && !signedIn && (
             <AuthPanel onSignedIn={() => void loadUsage()} />
           )}
 
           {usage && (
-            <div className="fc-card space-y-3 p-5">
+            <div className="fc-card space-y-4 p-5">
               <div className="flex items-baseline justify-between gap-3">
                 <h2 className="fc-heading">This month</h2>
-                <span className="fc-chip-accent capitalize">{usage.tier}</span>
+                <span className="fc-chip-accent capitalize">{usage.tier} plan</span>
               </div>
 
               <div>
@@ -742,7 +796,9 @@ export default function FlipcastDashboard() {
                   aria-label="Monthly render time used"
                 >
                   <div
-                    className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      usagePercent >= 90 ? 'bg-amber-400' : 'bg-indigo-500'
+                    }`}
                     style={{ width: `${usagePercent}%` }}
                   />
                 </div>
@@ -751,45 +807,42 @@ export default function FlipcastDashboard() {
                 </p>
               </div>
 
-              {usage.tier === 'free' && (
+              {usage.tier === 'free' ? (
+                <div className="space-y-2 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] p-4">
+                  <p className="text-sm font-semibold text-white">Need more minutes?</p>
+                  <p className="fc-body">
+                    Creator gives you an hour a month and clips up to 15 minutes.
+                  </p>
+                  <Link href="/pricing" className="fc-btn-primary mt-1 w-full">
+                    See plans
+                  </Link>
+                </div>
+              ) : (
                 <button
-                  onClick={openUpgrade}
+                  onClick={() => void openPortal()}
                   disabled={checkoutBusy}
-                  className="fc-btn-primary w-full"
+                  className="fc-btn-secondary w-full"
                 >
-                  {checkoutBusy ? 'Opening…' : 'Upgrade plan'}
+                  {checkoutBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CreditCard className="h-4 w-4" />
+                  )}
+                  Manage billing
                 </button>
               )}
             </div>
           )}
 
-          <div className="fc-card space-y-3 p-5">
-            <h2 className="fc-heading">How it works</h2>
-            <ol className="space-y-3">
-              {[
-                'Drop in one horizontal master.',
-                'Choose your formats and what stays in shot.',
-                'We encode in this tab — nothing is uploaded.',
-              ].map((step, i) => (
-                <li key={step} className="flex gap-3">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-slate-300">
-                    {i + 1}
-                  </span>
-                  <span className="fc-body">{step}</span>
-                </li>
-              ))}
-            </ol>
-          </div>
+          <p className="flex items-start gap-2 px-1 text-xs leading-relaxed text-slate-500">
+            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400/80" />
+            Videos are encoded in this tab. Only the file name, duration and format reach our
+            server.
+          </p>
         </aside>
       </div>
 
-      <footer className="mt-8 flex flex-wrap items-center justify-center gap-x-1 gap-y-1 pb-6 text-center text-xs text-slate-600">
-        <span>Flipcast · renders run in your browser · MIT licensed</span>
-        <span aria-hidden="true">·</span>
-        <a href="/pricing" className="fc-link !text-slate-500 hover:!text-slate-300">
-          Pricing
-        </a>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

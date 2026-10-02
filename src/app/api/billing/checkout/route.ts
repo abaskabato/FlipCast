@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { auth } from '@/lib/auth';
 import { isPurchasable, PLAN_IDS, stripe, unavailableReason } from '@/lib/billing/stripe';
-import { setStripeCustomerId } from '@/lib/billing/sync';
+import { getBillingState, setStripeCustomerId } from '@/lib/billing/sync';
 
 /**
  * Create a Stripe Checkout session for a paid plan.
@@ -66,7 +66,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const user = session.user as { email?: string; stripeCustomerId?: string | null };
+  // Fresh from the DB: the session may predate checkout or a tier change.
+  const billing = await getBillingState(session.user.id);
+  if (!billing) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  }
+  // A second checkout would create a second, parallel subscription. Plan
+  // changes for existing subscribers go through the billing portal instead.
+  if (billing.tier !== 'free') {
+    return NextResponse.json(
+      {
+        error: 'already_subscribed',
+        message: 'You already have a paid plan. Use “Manage billing” to change it.',
+      },
+      { status: 409 },
+    );
+  }
+
+  const user = { email: session.user.email, stripeCustomerId: billing.customerId };
 
   try {
     const checkout = await client.checkout.sessions.create({
@@ -74,13 +91,14 @@ export async function POST(request: Request) {
       line_items: [{ price, quantity: 1 }],
       // Reuse the customer so upgrades attach to one record instead of creating
       // a duplicate per purchase.
+      // Subscription mode always creates a customer on completion
+      // (`customer_creation` is payment-mode only and is rejected here); the
+      // webhook stores its id.
       ...(user.stripeCustomerId
         ? { customer: user.stripeCustomerId }
-        : {
-            customer_email: user.email,
-            customer_creation: 'always',
-          }),
+        : { customer_email: user.email }),
       client_reference_id: session.user.id,
+      allow_promotion_codes: true,
       success_url: `${siteUrl}/?upgraded=1`,
       cancel_url: `${siteUrl}/?cancelled=1`,
       // success_url/cancel_url are built from BETTER_AUTH_URL rather than any

@@ -41,6 +41,28 @@
   /* Minimum comfortable target. 44px is the platform guideline; 36 is the
      floor for secondary controls so dense rows stay dense. */
   --fc-tap: 36px;
+
+  /* shadcn tokens (HSL triples) consumed by better-auth-ui via
+     tailwind.config.js. Mapped onto the same slate/indigo palette. */
+  --background: 222 47% 11%; /* slate-900, the card the forms sit in */
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 239 84% 67%; /* indigo-500 */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 217 33% 17%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 215 25% 27%; /* slate-700 */
+  --input: 215 25% 27%;
+  --ring: 234 89% 74%; /* indigo-400 */
 }
 
 @tailwind base;
