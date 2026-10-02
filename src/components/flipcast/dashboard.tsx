@@ -60,6 +60,9 @@ const MODE_OPTIONS: { id: TrackingMode; title: string; desc: string }[] = [
 
 const MAX_FILE_BYTES = BROWSER_MAX_INPUT_BYTES;
 
+/** sessionStorage key carrying a plan picked on /pricing across sign-in. */
+const CHECKOUT_INTENT_KEY = 'flipcast:checkout-intent';
+
 export default function FlipcastDashboard() {
   const { data: session, isPending: sessionPending } = useSession();
 
@@ -122,22 +125,49 @@ export default function FlipcastDashboard() {
   }, []);
 
   // Resume a checkout chosen on /pricing before the user had signed in.
-  // `?plan=` survives the sign-in because auth happens in place on this page.
+  //
+  // The plan arrives as `?plan=&period=`, but the auth forms navigate to "/"
+  // after signing in, which drops the query string. So the intent is moved
+  // into sessionStorage as soon as the page loads, and read back from there.
   const checkoutResumed = useRef(false);
   useEffect(() => {
-    if (!signedIn || checkoutResumed.current) return;
     const params = new URLSearchParams(window.location.search);
     const tier = params.get('plan');
     if (!isPaidTier(tier)) return;
     const period = params.get('period');
+    try {
+      sessionStorage.setItem(
+        CHECKOUT_INTENT_KEY,
+        JSON.stringify({ tier, period: isBillingPeriod(period) ? period : 'monthly' }),
+      );
+    } catch {
+      // Storage blocked: the URL still works if the user is already signed in.
+    }
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+    if (!signedIn) setNotice('Sign in or create an account to continue to checkout.');
+    // Only on first load; the signed-in branch below does the resuming.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!signedIn || checkoutResumed.current) return;
+    let intent: { tier?: unknown; period?: unknown } | null = null;
+    try {
+      intent = JSON.parse(sessionStorage.getItem(CHECKOUT_INTENT_KEY) ?? 'null');
+      sessionStorage.removeItem(CHECKOUT_INTENT_KEY);
+    } catch {
+      intent = null;
+    }
+    if (!intent || !isPaidTier(intent.tier)) return;
     checkoutResumed.current = true;
-    window.history.replaceState({}, '', window.location.pathname);
     setCheckoutBusy(true);
     setNotice('Taking you to checkout…');
-    void startCheckout(tier, isBillingPeriod(period) ? period : 'monthly').then((outcome) => {
-      if (outcome.kind === 'message') setNotice(outcome.message);
-      if (outcome.kind !== 'redirected') setCheckoutBusy(false);
-    });
+    void startCheckout(intent.tier, isBillingPeriod(intent.period) ? intent.period : 'monthly').then(
+      (outcome) => {
+        if (outcome.kind === 'message') setNotice(outcome.message);
+        if (outcome.kind !== 'redirected') setCheckoutBusy(false);
+      },
+    );
   }, [signedIn]);
 
   // Back from Stripe. The tier is written by the webhook, which can land a few
