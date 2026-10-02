@@ -309,19 +309,23 @@ export default function FlipcastDashboard() {
     } catch (e) {
       const aborted = e instanceof RenderAbortedError;
       setError(aborted ? 'Render cancelled.' : e instanceof Error ? e.message : 'Render failed.');
-      if (!aborted) {
-        await fetch('/api/transform', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId, status: 'failed', error: String(e).slice(0, 400) }),
-        }).catch(() => undefined);
-        void loadUsage();
-      }
+      // Report cancellations too: either terminal state refunds the reservation,
+      // and an unreported job would otherwise sit in "rendering" forever.
+      await fetch('/api/transform', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          aborted
+            ? { jobId, status: 'canceled' }
+            : { jobId, status: 'failed', error: String(e).slice(0, 400) },
+        ),
+      }).catch(() => undefined);
+      void loadUsage();
     } finally {
       setIsRendering(false);
       abortRef.current = null;
     }
-  }, [file, meta, isRendering, signedIn, targets, trackingMode, usage, loadUsage]);
+  }, [file, meta, isRendering, signedIn, targets, trackingMode, focus, usage, loadUsage]);
 
   const cancelRender = useCallback(() => {
     abortRef.current?.abort();

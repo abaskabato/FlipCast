@@ -62,9 +62,9 @@ try {
   check('signup + session', (await page.locator('text=Sign out').count()) > 0, email);
 
   // ---- 2. quota panel appears ----
-  check('quota panel visible', await page.locator('text=Render time this month').count() > 0);
-  const quotaText = await page.locator('text=/remaining/i').first().innerText().catch(() => '');
-  check('quota shows free allowance', /3m|180|remaining/i.test(quotaText), quotaText.trim().slice(0, 60));
+  check('quota panel visible', await page.locator('h2:has-text("This month")').count() > 0);
+  const quotaText = await page.locator('text=/of render time left/i').first().innerText().catch(() => '');
+  check('quota shows free allowance', /3m|180|left/i.test(quotaText), quotaText.trim().slice(0, 60));
 
   // ---- 3. select dual-format outputs ----
   // 9:16 is selected by default, so only 1:1 needs toggling on.

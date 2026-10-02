@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
 import { RATIOS, checkQuota } from '@/lib/quotas';
 import type { RatioId } from '@/lib/quotas';
-import { reserveUsage, releaseUsage, type UsageSnapshot } from '@/lib/usage';
+import { countActiveJobs, reserveUsage, releaseUsage, type UsageSnapshot } from '@/lib/usage';
 
 export const runtime = 'nodejs';
 
@@ -74,7 +74,17 @@ export async function POST(request: Request) {
   }
   const normalizedMode = mode && VALID_MODES.includes(mode) ? mode : 'auto_center';
 
+  // A zero or missing duration would reserve nothing and render for free.
+  const seconds = Number(sourceDurationSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return fail(400, 'Could not read the duration of that video.');
+  }
+
   try {
+    if ((await countActiveJobs(userId)) >= MAX_ACTIVE_JOBS) {
+      return fail(429, `You already have ${MAX_ACTIVE_JOBS} renders running. Let one finish first.`);
+    }
+
     // Advisory pre-check so we can return a friendly message before touching
     // the database. The authoritative check is the atomic reservation below,
     // which re-reads the tier from the DB.

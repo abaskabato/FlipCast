@@ -69,16 +69,18 @@ export function isPurchasable(tier: string, period: BillingPeriod): boolean {
   return Boolean(PLAN_IDS[tier][period]);
 }
 
-/** Why checkout is unavailable, for an actionable error message. */
+/**
+ * Why checkout is unavailable. The returned text is shown to customers, so the
+ * operator-facing detail (which env var is missing) goes to the server log.
+ */
 export function unavailableReason(): string {
   if (!stripe()) {
-    return (
-      'Payments are not configured yet. Set STRIPE_SECRET_KEY on the server ' +
-      'to enable paid plans.'
-    );
+    console.warn('[billing] checkout requested but STRIPE_SECRET_KEY is not set.');
+    return 'Paid plans are coming soon. Your free allowance keeps working in the meantime.';
   }
   if (!isPurchasable('creator', 'monthly')) {
-    return 'No Stripe price is configured for this plan. Set STRIPE_PRICE_* env vars.';
+    console.warn('[billing] checkout requested but STRIPE_PRICE_* is not set.');
+    return 'Paid plans are coming soon. Your free allowance keeps working in the meantime.';
   }
   return 'This plan cannot be purchased right now.';
 }

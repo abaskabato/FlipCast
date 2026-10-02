@@ -172,12 +172,22 @@ function emptyUsage(): UsageSnapshot {
   };
 }
 
-/** Jobs that have been sitting in a non-terminal state too long to be real. */
+/**
+ * Renders still plausibly in progress. A job whose tab was closed never reports
+ * a terminal state, so anything older than the window is treated as abandoned
+ * rather than counted forever.
+ */
 export async function countActiveJobs(userId: string): Promise<number> {
   const rows = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(videoJobs)
-    .where(and(eq(videoJobs.userId, userId), sql`${videoJobs.status} in ('pending','rendering')`));
+    .where(
+      and(
+        eq(videoJobs.userId, userId),
+        sql`${videoJobs.status} in ('pending','rendering')`,
+        sql`${videoJobs.startedAt} > now() - interval '2 hours'`,
+      ),
+    );
   return rows[0]?.n ?? 0;
 }
 

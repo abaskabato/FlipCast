@@ -205,6 +205,11 @@ export async function renderToRatios(
   };
   ffmpeg.on('progress', onProgress);
 
+  // exec() cannot be interrupted, so cancelling mid-output means tearing the
+  // worker down. The next render reloads the core (from the HTTP cache).
+  const onAbort = () => void disposeEngine();
+  opts.signal?.addEventListener('abort', onAbort, { once: true });
+
   try {
     opts.onProgress?.({ progress: 0.02, label: 'Reading video into memory…' });
     await ffmpeg.writeFile(srcName, await readFileBytes(file));
@@ -264,7 +269,12 @@ export async function renderToRatios(
       // hold both renders plus the source at once.
       await ffmpeg.deleteFile(outName);
     }
+  } catch (e) {
+    // A terminated worker rejects with its own error; report it as a cancel.
+    if (opts.signal?.aborted) throw new RenderAbortedError();
+    throw e;
   } finally {
+    opts.signal?.removeEventListener('abort', onAbort);
     try {
       ffmpeg.off('progress', onProgress);
     } catch {

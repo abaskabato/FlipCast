@@ -29,6 +29,9 @@ export function AuthPanel({ onSignedIn }: { onSignedIn?: () => void }) {
       emailVerification={false}
       account={false}
       deleteUser={false}
+      // No reset page or email provider is deployed yet, so the library's
+      // "Forgot password?" link would lead to a 404. Re-enable once both exist.
+      credentials={{ forgotPassword: false }}
       onSessionChange={() => {
         onSignedIn?.();
       }}
