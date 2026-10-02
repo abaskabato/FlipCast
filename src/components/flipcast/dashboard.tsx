@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   ArrowRight,
-  Download,
   Loader2,
   X,
   ShieldCheck,
@@ -23,6 +22,7 @@ import Link from 'next/link';
 import { authClient, useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
 import FocusPicker from './focus-picker';
+import ShareActions from './share-actions';
 import { renderToRatios, RenderAbortedError, type RenderedOutput } from '@/lib/video/ffmpeg-client';
 import {
   CENTER_FOCUS,
@@ -748,13 +748,7 @@ export default function FlipcastDashboard() {
                   <p className="text-sm font-semibold text-white">{o.ratio} · {o.width}×{o.height}</p>
                   <p className="fc-meta">{formatBytes(o.sizeBytes)}</p>
                 </div>
-                <button
-                  onClick={() => downloadOutput(o)}
-                  className="fc-btn-primary mt-auto w-full"
-                >
-                  <Download className="h-4 w-4" />
-                  Download
-                </button>
+                <ShareActions output={o} onDownload={downloadOutput} />
               </div>
             ))}
           </div>
