@@ -17,7 +17,6 @@ import {
   Crop,
   ScanFace,
   Focus as FocusIcon,
-  ArrowRight,
   RefreshCw,
   Link2,
   Scissors,
@@ -39,6 +38,7 @@ import {
 import { detectSubject, TrackingUnavailableError } from '@/lib/video/subject-detect';
 import { smoothPath, type SubjectPath } from '@/lib/video/tracking';
 import { importFromLink } from '@/lib/import/client';
+import { useFeatures } from '@/lib/features-client';
 import { CLIP_LENGTHS, toLines, type ClipLength, type ClipSuggestion } from '@/lib/clips/lines';
 import type { CaptionWord } from '@/lib/captions/captions';
 import { isWholeClip, planSplitSegments, type SplitSegment } from '@/lib/video/layout';
@@ -156,6 +156,8 @@ const CHECKOUT_INTENT_KEY = 'flipcast:checkout-intent';
 
 export default function FlipcastDashboard() {
   const { data: session, isPending: sessionPending } = useSession();
+  // Optional features (AI clips, publishing) are only offered once switched on.
+  const features = useFeatures();
 
   const [file, setFile] = useState<File | null>(null);
   const [meta, setMeta] = useState<VideoMeta | null>(null);
@@ -652,11 +654,12 @@ export default function FlipcastDashboard() {
   /** Import from a pasted link (lib/import/client.ts). */
   const [linkUrl, setLinkUrl] = useState('');
   const [linkProgress, setLinkProgress] = useState<number | null>(null);
-  const loadFromLink = useCallback(async () => {
+  const [heroLink, setHeroLink] = useState('');
+  const loadFromLink = useCallback(async (url?: string) => {
     setError(null);
     setLinkProgress(0);
     try {
-      const imported = await importFromLink(linkUrl, {
+      const imported = await importFromLink(url ?? linkUrl, {
         maxBytes: MAX_FILE_BYTES,
         onProgress: (loaded, total) => setLinkProgress(total ? loaded / total : 0),
       });
@@ -754,30 +757,55 @@ export default function FlipcastDashboard() {
           <div>
             <p className="fc-chip-accent">
               <Sparkles className="h-3.5 w-3.5" />
-              New: split screen for two-person podcasts
+              New: Dropbox &amp; Drive links · any-language captions
             </p>
             <h1 className="fc-display mt-5 max-w-xl text-5xl font-extrabold leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-7xl">
               One clip in.{' '}
               <span className="fc-gradient-text">Every feed out.</span>
             </h1>
             <p className="mt-5 max-w-lg text-base leading-relaxed text-zinc-400 sm:text-lg">
-              Turn a horizontal video into captioned vertical, square and widescreen cuts that
-              keep every speaker in frame, with split screen when two people are talking. Ready
-              for TikTok, Reels, Shorts and YouTube in one pass.
+              {features.clips
+                ? 'Drop in a long video and AI finds the moments worth posting, then cuts them into captioned vertical, square and widescreen clips that keep every speaker in frame.'
+                : 'Turn a horizontal video into captioned vertical, square and widescreen cuts that keep every speaker in frame, with split screen when two people are talking.'}{' '}
+              Ready for TikTok, Reels, Shorts and YouTube{features.youtube || features.tiktok ? ', and posted or scheduled from here.' : ' in one pass.'}
             </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <button
-                onClick={startFromCta}
-                className="fc-btn-primary !min-h-[56px] !px-8 !text-base"
-              >
-                <Upload className="h-5 w-5" />
-                Upload a video — it’s free
+            {/* The way in, the way Opus Clip and others lead: paste a link or upload. */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const url = heroLink.trim();
+                if (!url) return startFromCta();
+                document.getElementById('studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                void loadFromLink(url).then(() => setHeroLink(''));
+              }}
+              className="mt-8 flex max-w-xl flex-col gap-2 rounded-[28px] border border-white/10 bg-white/[0.04] p-2 sm:flex-row sm:items-center sm:rounded-full"
+            >
+              <label htmlFor="hero-link" className="sr-only">
+                Video link
+              </label>
+              <div className="relative flex-1">
+                <Link2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                <input
+                  id="hero-link"
+                  type="url"
+                  inputMode="url"
+                  value={heroLink}
+                  onChange={(e) => setHeroLink(e.target.value)}
+                  placeholder="Paste a Dropbox, Drive or video link"
+                  className="min-h-[48px] w-full rounded-full bg-transparent pl-10 pr-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none"
+                />
+              </div>
+              <button type="submit" disabled={linkProgress !== null} className="fc-btn-primary !min-h-[48px] !px-6">
+                {linkProgress !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : heroLink.trim() ? <Link2 className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+                {heroLink.trim() ? 'Import video' : 'Upload a video'}
               </button>
-              <Link href="/pricing" className="fc-btn-ghost !min-h-[44px] justify-center !text-sm">
-                See pricing
-                <ArrowRight className="h-4 w-4" />
+            </form>
+            <p className="fc-meta mt-2 pl-2">
+              Or drop a file into the studio below ·{' '}
+              <Link href="/pricing" className="underline underline-offset-2 hover:text-zinc-300">
+                see pricing
               </Link>
-            </div>
+            </p>
             <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-zinc-400">
               {[
                 'No watermark',
@@ -1026,7 +1054,7 @@ export default function FlipcastDashboard() {
       )}
 
       {/* AI clip finding: for longer videos, pick the moments worth posting. */}
-      {file && meta && meta.durationSeconds >= 60 && (
+      {features.clips && file && meta && meta.durationSeconds >= 60 && (
         <div className="fc-card space-y-4 p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -1550,7 +1578,7 @@ export default function FlipcastDashboard() {
         </aside>
       </div>
 
-      {!sessionPending && !signedIn && <LandingSections onStart={startFromCta} />}
+      {!sessionPending && !signedIn && <LandingSections onStart={startFromCta} features={features} />}
 
       <SiteFooter />
     </div>

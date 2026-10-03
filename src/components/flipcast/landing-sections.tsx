@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import {
-  BadgeCheck,
   Captions,
   Check,
   Layers,
@@ -12,60 +11,80 @@ import {
   Upload,
   X,
   Rows2,
+  Wand2,
+  CalendarClock,
+  Link2,
+  ChevronDown,
 } from 'lucide-react';
 
-import { formatQuota, TIER_LIMITS } from '@/lib/quotas';
+import type { Features } from '@/lib/features-client';
+import { BROWSER_MAX_INPUT_BYTES, formatQuota, MAX_SOURCE_SECONDS, TIER_LIMITS } from '@/lib/quotas';
 
-const STEPS = [
-  {
-    icon: Upload,
-    title: 'Drop in your video',
-    body: 'Any horizontal MP4, MOV, WebM or MKV. It opens in this tab and is never uploaded.',
-  },
-  {
-    icon: MousePointerClick,
-    title: 'Pick formats and framing',
-    body: 'Choose 9:16, 1:1 and 16:9 at once. Auto-track follows the speaker, or set the framing yourself.',
-  },
-  {
-    icon: Send,
-    title: 'Download or post',
-    body: 'Every cut renders together. Share straight to TikTok, Reels, Shorts, YouTube, LinkedIn or X.',
-  },
-];
+type Item = { icon: typeof Upload; title: string; body: string };
 
-const FEATURES = [
-  {
-    icon: ScanFace,
-    title: 'Auto-track',
-    body: 'Face detection finds the speaker in every shot and glides the crop with them, with no jitter.',
-  },
-  {
-    icon: Captions,
-    title: 'Word-by-word captions',
-    body: 'Transcribed on your device in dozens of languages, from Spanish to Hindi to Japanese. Three styles, plus an .srt file.',
-  },
-  {
-    icon: Layers,
-    title: 'Every format in one pass',
-    body: 'Vertical, square and widescreen from a single render, sized to the detail your source has.',
-  },
-  {
-    icon: ShieldCheck,
-    title: 'Private by design',
-    body: 'Rendering runs in your browser. Unreleased or client footage never touches a server.',
-  },
-  {
-    icon: BadgeCheck,
-    title: 'No watermark, ever',
-    body: 'Not on Free, not on any plan. Your clips go out looking like yours.',
-  },
-  {
-    icon: Rows2,
-    title: 'Split screen for podcasts',
-    body: 'Two people on camera? The vertical cut stacks both speakers, so nobody gets cropped out.',
-  },
-];
+/** The three steps, worded for what this deployment actually offers. */
+function steps(f: Features): Item[] {
+  return [
+    {
+      icon: Upload,
+      title: 'Drop in or link your video',
+      body: 'Any MP4, MOV, WebM or MKV, from your device or a Dropbox or Google Drive link. It is processed in this tab.',
+    },
+    f.clips
+      ? {
+          icon: Wand2,
+          title: 'Pick the moments and formats',
+          body: 'AI suggests the clips worth posting from a long video; choose 9:16, 1:1 and 16:9, with Auto-track on every one.',
+        }
+      : {
+          icon: MousePointerClick,
+          title: 'Pick formats and framing',
+          body: 'Choose 9:16, 1:1 and 16:9 at once. Auto-track follows the speaker, or set the framing yourself.',
+        },
+    f.youtube || f.tiktok
+      ? {
+          icon: CalendarClock,
+          title: 'Post or schedule',
+          body: 'Publish to YouTube and TikTok now or at a set time, or download every cut to post anywhere.',
+        }
+      : {
+          icon: Send,
+          title: 'Download or post',
+          body: 'Every cut renders together. Share straight to TikTok, Reels, Shorts, YouTube, LinkedIn or X.',
+        },
+  ];
+}
+
+/** Feature cards; the optional ones appear only once switched on. */
+function features(f: Features): Item[] {
+  return [
+    ...(f.clips
+      ? [{ icon: Wand2, title: 'AI finds the best clips', body: 'Drop in a podcast or long video and get stand-alone moments, titled and ranked. Your video stays on your device; only the transcript is analysed.' }]
+      : []),
+    { icon: ScanFace, title: 'Auto-track', body: 'Face detection finds the speaker in every shot and glides the crop with them, with no jitter.' },
+    { icon: Rows2, title: 'Split screen for podcasts', body: 'Two people on camera? The vertical cut stacks both speakers while they are on screen together, and switches back when it cuts to one.' },
+    { icon: Captions, title: 'Captions in any language', body: 'Word-by-word captions in dozens of languages and every script, from Hindi to Japanese to Arabic. Five styles, plus an .srt file.' },
+    { icon: Layers, title: 'Every format in one pass', body: 'Vertical, square and widescreen from a single render, sized to the detail your source has.' },
+    { icon: Link2, title: 'Import from a link', body: 'Paste a Dropbox, Google Drive or direct video link instead of downloading and re-uploading.' },
+    ...(f.youtube || f.tiktok
+      ? [{ icon: CalendarClock, title: 'Publish and schedule', body: `Post straight to ${[f.youtube && 'YouTube', f.tiktok && 'TikTok'].filter(Boolean).join(' and ')}, now or at the time your audience is online.` }]
+      : []),
+    { icon: ShieldCheck, title: 'Private, no watermark', body: 'Rendering runs in your browser, so footage never touches a server. No watermark on any plan, including Free.' },
+  ];
+}
+
+/** Questions people ask before they try it. */
+function faq(f: Features): { q: string; a: string }[] {
+  return [
+    { q: 'Is it really free?', a: `Yes. Free includes ${formatQuota(TIER_LIMITS.free)} of video a month, every format, Auto-track and captions, with no watermark and no card. Paid plans add hours, not features.` },
+    { q: 'Do you upload my video?', a: `No. Rendering and transcription run in your browser, so your footage stays on your device.${f.clips ? ' Finding clips sends only the transcript text to our AI.' : ''}${f.tiktokScheduling ? ' A TikTok post you schedule for later is held privately until it goes out, then deleted.' : ''}` },
+    { q: 'Which languages do captions support?', a: 'Dozens, detected automatically, including Spanish, Portuguese, French, German, Hindi, Arabic, Japanese, Korean and Chinese, each drawn in a font made for its script.' },
+    { q: 'How long can my videos be?', a: `Up to ${MAX_SOURCE_SECONDS.free / 60} minutes per video on Free, ${MAX_SOURCE_SECONDS.creator / 60} on Creator and ${MAX_SOURCE_SECONDS.agency / 60} on Agency, and up to ${Math.round(BROWSER_MAX_INPUT_BYTES / 1024 / 1024)} MB, since the video is processed in your browser.` },
+    ...(f.clips ? [{ q: 'Can it find clips in a long video?', a: 'Yes. Load a video over a minute long and choose "Find clips". AI suggests stand-alone moments of the length you pick; render the ones you like.' }] : []),
+    ...(f.youtube || f.tiktok ? [{ q: 'Can I post straight to social media?', a: `Yes: connect ${[f.youtube && 'YouTube', f.tiktok && 'TikTok'].filter(Boolean).join(' and ')} and post or schedule from the finished clip. Everything else can be downloaded or shared to any app.` }] : []),
+    { q: 'What does it run on?', a: 'Any recent desktop browser, and most phones. A faster computer renders faster, because the work happens on your device.' },
+  ];
+}
 
 /** Structural differences only: things that follow from rendering on-device. */
 const COMPARISON: { label: string; us: boolean; cloud: boolean | 'varies' }[] = [
@@ -85,7 +104,10 @@ function Mark({ value }: { value: boolean | 'varies' }) {
   );
 }
 
-export default function LandingSections({ onStart }: { onStart: () => void }) {
+export default function LandingSections({ onStart, features: live }: { onStart: () => void; features: Features }) {
+  const STEPS = steps(live);
+  const FEATURES = features(live);
+  const FAQ = faq(live);
   return (
     <div className="space-y-24 pt-16">
       <section aria-labelledby="how">
@@ -159,6 +181,23 @@ export default function LandingSections({ onStart }: { onStart: () => void }) {
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="faq" className="mx-auto max-w-3xl">
+        <h2 id="faq" className="fc-display text-center text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
+          Questions
+        </h2>
+        <div className="mt-8 space-y-2">
+          {FAQ.map(({ q, a }) => (
+            <details key={q} className="fc-card group p-0 [&_summary::-webkit-details-marker]:hidden">
+              <summary className="flex min-h-[56px] cursor-pointer list-none items-center justify-between gap-4 px-5 text-left text-base font-semibold text-white">
+                {q}
+                <ChevronDown className="h-5 w-5 shrink-0 text-zinc-500 transition-transform group-open:rotate-180" />
+              </summary>
+              <p className="fc-body px-5 pb-5">{a}</p>
+            </details>
+          ))}
         </div>
       </section>
 

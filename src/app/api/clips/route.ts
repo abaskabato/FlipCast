@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { auth } from '@/lib/auth';
+import { clipFindingEnabled } from '@/lib/clips/config';
 import { ClipFindError, findClips } from '@/lib/clips/find';
 import { checkRateLimit } from '@/lib/rate-limit';
 
@@ -31,6 +32,9 @@ const Body = z.object({
  * device. Only the transcript text is sent here, never the video.
  */
 export async function POST(request: Request) {
+  if (!clipFindingEnabled()) {
+    return NextResponse.json({ error: 'Clip finding is not available yet.' }, { status: 503 });
+  }
   const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Sign in to find clips.' }, { status: 401 });
