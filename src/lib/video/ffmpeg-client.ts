@@ -17,6 +17,7 @@
 
 import { loadFFmpegClass, type FFmpegInstance } from './ffmpeg-loader';
 import { filterExpr, outputCanvas, type Focus, type Ratio } from './geometry';
+import { fetchAsset, withCdnFallback } from '../asset-cdn';
 import { focusTrackFor, type FocusTrack, type SubjectPath } from './tracking';
 import { splitFilter, type SplitSegment } from './layout';
 import {
@@ -27,7 +28,10 @@ import {
   type CaptionWord,
 } from '../captions/captions';
 
-/** Core assets are served from /public (see scripts/sync-ffmpeg-core.mjs). */
+/**
+ * Core assets are served from /public (see scripts/sync-ffmpeg-core.mjs); the
+ * big .wasm binaries load from the CDN first (src/lib/asset-cdn.ts).
+ */
 const CORE_BASE = '/ffmpeg';
 const SINGLE_CORE_VERSION = '0.12.10';
 
@@ -103,17 +107,31 @@ export function prefersMultiThread(): boolean {
  * worker imports them as ES modules, which works for a served file, and a blob
  * would duplicate the ~32 MB wasm in memory right before we ask the engine to
  * hold a whole video in WASM heap too.
+ *
+ * Only the .wasm comes from the CDN: the JavaScript stays same-origin because
+ * the multi-threaded core starts workers from it.
  */
 async function loadCore(useMt: boolean): Promise<FFmpegInstance> {
   const FFmpeg = await loadFFmpegClass();
-  const ffmpeg = new FFmpeg();
   const base = useMt ? `${CORE_BASE}/mt` : `${CORE_BASE}/${SINGLE_CORE_VERSION}`;
-  await ffmpeg.load({
-    coreURL: `${base}/ffmpeg-core.js`,
-    wasmURL: `${base}/ffmpeg-core.wasm`,
-    ...(useMt ? { workerURL: `${base}/ffmpeg-core.worker.js` } : {}),
+  return withCdnFallback(useMt ? 'ffmpeg core (multi-threaded)' : 'ffmpeg core', async (url) => {
+    const ffmpeg = new FFmpeg();
+    try {
+      await ffmpeg.load({
+        coreURL: `${base}/ffmpeg-core.js`,
+        wasmURL: url(`${base}/ffmpeg-core.wasm`),
+        ...(useMt ? { workerURL: `${base}/ffmpeg-core.worker.js` } : {}),
+      });
+    } catch (e) {
+      try {
+        ffmpeg.terminate();
+      } catch {
+        /* never started */
+      }
+      throw e;
+    }
+    return ffmpeg;
   });
-  return ffmpeg;
 }
 
 export async function getFFmpeg(
@@ -562,7 +580,7 @@ async function installCaptionFonts(
   for (const font of captionFonts(words)) {
     if (done.has(font.file)) continue;
     if (font.file !== 'Anton-Regular.ttf') onStatus('Getting the caption font for this language…');
-    const res = await fetch(`/fonts/${font.file}`);
+    const res = await fetchAsset(`/fonts/${font.file}`);
     if (!res.ok) throw new Error(`Could not load the caption font ${font.family}.`);
     const base = font.file.split('/').pop()!;
     await ffmpeg.writeFile(`${FONTS_DIR}/${base}`, new Uint8Array(await res.arrayBuffer()));

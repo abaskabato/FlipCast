@@ -2,10 +2,10 @@
  * Copies the FFmpeg WASM core into /public/ffmpeg so the browser can load it
  * from our own origin.
  *
- * Why not a CDN: the single-threaded core is ~32MB and the multi-threaded core
- * ~33MB. Serving them ourselves means no third party in the critical path, no
- * user-IP leak to a CDN, and no surprise outage taking the renderer down.
- * COEP additionally requires our own assets (a CDN would need CORP headers).
+ * The browser loads the big .wasm binaries from jsDelivr first, to save the
+ * site's bandwidth (src/lib/asset-cdn.ts). These copies are the fallback, so
+ * a CDN outage never takes the renderer down, and they serve every JavaScript
+ * loader, which has to be same-origin.
  *
  * The binaries are copied at install time rather than committed, because they
  * are large and versioned by package.json.

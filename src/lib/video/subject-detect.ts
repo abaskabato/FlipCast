@@ -20,6 +20,7 @@
  * their box contributes a head estimated from the top of that box.
  */
 
+import { withCdnFallback } from '../asset-cdn';
 import { sampleTimes, type FaceBox, type SubjectSample } from './tracking';
 
 const WASM_BASE = '/mediapipe';
@@ -60,19 +61,29 @@ type PersonDetector = {
 let detectorPromise: Promise<Detector> | null = null;
 let personPromise: Promise<PersonDetector | null> | null = null;
 
+/**
+ * MediaPipe's file set, with the .wasm binary (and models, via `url`) from the
+ * CDN. The loader script stays same-origin; FilesetResolver picks the SIMD or
+ * non-SIMD variant for this browser.
+ */
+async function visionFileset(url: (localPath: string) => string) {
+  const { FilesetResolver } = await import('@mediapipe/tasks-vision');
+  const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+  return { ...fileset, wasmBinaryPath: url(fileset.wasmBinaryPath) };
+}
+
 /** The person detector is a helper: if it cannot load, faces alone still work. */
 async function getPersonDetector(): Promise<PersonDetector | null> {
   personPromise ??= (async () => {
     try {
-      const { ObjectDetector, FilesetResolver } = await import('@mediapipe/tasks-vision');
-      const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
-      return (await ObjectDetector.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: PERSON_MODEL_URL, delegate: 'CPU' },
+      const { ObjectDetector } = await import('@mediapipe/tasks-vision');
+      return await withCdnFallback('person detector', async (url) => (await ObjectDetector.createFromOptions(await visionFileset(url), {
+        baseOptions: { modelAssetPath: url(PERSON_MODEL_URL), delegate: 'CPU' },
         runningMode: 'IMAGE',
         categoryAllowlist: ['person'],
         scoreThreshold: 0.4,
         maxResults: 4,
-      })) as unknown as PersonDetector;
+      })) as unknown as PersonDetector);
     } catch (e) {
       console.warn('[track] person detector unavailable:', e);
       return null;
@@ -109,13 +120,12 @@ function headsFromPeople(people: PersonDetector, frame: HTMLCanvasElement, faces
 
 async function getDetector(): Promise<Detector> {
   detectorPromise ??= (async () => {
-    const { FaceDetector, FilesetResolver } = await import('@mediapipe/tasks-vision');
-    const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
-    return (await FaceDetector.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+    const { FaceDetector } = await import('@mediapipe/tasks-vision');
+    return withCdnFallback('face detector', async (url) => (await FaceDetector.createFromOptions(await visionFileset(url), {
+      baseOptions: { modelAssetPath: url(MODEL_URL), delegate: 'CPU' },
       runningMode: 'IMAGE',
       minDetectionConfidence: 0.5,
-    })) as unknown as Detector;
+    })) as unknown as Detector);
   })().catch((e) => {
     detectorPromise = null;
     throw e;

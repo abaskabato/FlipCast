@@ -7,8 +7,9 @@
  * PCM extracted by the render engine; nothing is sent anywhere. The only
  * network traffic is the one-time model download from Hugging Face (about
  * 77 MB for the default model, 249 MB for the accurate one, then cached by the
- * browser), and the ONNX runtime is served from our own origin (public/ort,
- * copied by scripts/sync-ffmpeg-core.mjs).
+ * browser). The ONNX runtime's .wasm loads from the CDN when it answers and
+ * otherwise from our own origin (public/ort, copied by
+ * scripts/sync-ffmpeg-core.mjs); see src/lib/asset-cdn.ts.
  *
  * Long audio is cut into segments of about two minutes at the quietest point
  * near each boundary, so a word is rarely split and the UI gets real progress
@@ -16,6 +17,8 @@
  */
 
 import { env, pipeline } from '@huggingface/transformers';
+
+import { cdnUrl } from '../asset-cdn';
 
 /** Whisper base is quick to fetch and run; small is clearly more accurate, notably outside English. */
 const MODELS = {
@@ -31,13 +34,28 @@ const CUT_SEARCH_SECONDS = 4;
 const SILENCE_RMS = 0.004;
 
 env.allowLocalModels = false;
-// The plain SIMD+threads build: smaller than the asyncify one, and all the
-// WASM execution provider needs.
-if (env.backends.onnx.wasm) {
-  env.backends.onnx.wasm.wasmPaths = {
-    mjs: '/ort/ort-wasm-simd-threaded.mjs',
-    wasm: '/ort/ort-wasm-simd-threaded.wasm',
-  };
+
+const ORT_WASM = '/ort/ort-wasm-simd-threaded.wasm';
+
+/**
+ * Point the runtime at its files. The plain SIMD+threads build: smaller than
+ * the asyncify one, and all the WASM execution provider needs. ONNX Runtime
+ * cannot retry a failed start in the same worker, so the CDN copy is checked
+ * first and used only when it answers.
+ */
+async function configureRuntime(): Promise<void> {
+  if (!env.backends.onnx.wasm) return;
+  let wasm = ORT_WASM;
+  const cdn = cdnUrl(ORT_WASM);
+  if (cdn) {
+    try {
+      const res = await fetch(cdn, { method: 'HEAD' });
+      if (res.ok) wasm = cdn;
+    } catch {
+      /* use this site's copy */
+    }
+  }
+  env.backends.onnx.wasm.wasmPaths = { mjs: '/ort/ort-wasm-simd-threaded.mjs', wasm };
 }
 
 export type WorkerRequest = { audio: Float32Array; model?: CaptionModel };
@@ -61,7 +79,7 @@ let asrPromise: Promise<Asr> | null = null;
 function loadModel(model: CaptionModel): Promise<Asr> {
   // Track bytes per file so the overall download fraction is honest.
   const files = new Map<string, { loaded: number; total: number }>();
-  asrPromise ??= pipeline('automatic-speech-recognition', MODELS[model], {
+  asrPromise ??= configureRuntime().then(() => pipeline('automatic-speech-recognition', MODELS[model], {
     device: 'wasm',
     dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
     progress_callback: (p: { status: string; file?: string; loaded?: number; total?: number }) => {
@@ -75,7 +93,7 @@ function loadModel(model: CaptionModel): Promise<Asr> {
       }
       post({ type: 'download', loaded, total });
     },
-  }) as unknown as Promise<Asr>;
+  })) as unknown as Promise<Asr>;
   return asrPromise;
 }
 

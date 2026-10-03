@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pause, Play, ScanFace, Upload, XCircle } from 'lucide-react';
 
+import { preferCdn } from '@/lib/asset-cdn';
+
 /**
  * Real footage, real output. Every vertical clip here is an unedited Flipcast
  * render of its source (see public/demo/CREDITS.txt), shown next to a plain
@@ -24,6 +26,24 @@ const TWO_SPLIT = '/demo/twoshot-split';
 
 const TWO_CREDIT = 'https://www.pexels.com/video/a-man-interviewing-a-woman-6878737/';
 
+/**
+ * A demo clip and its poster from the CDN, switching to this site's copies if
+ * the CDN copy fails to load (src/lib/asset-cdn.ts).
+ */
+function demoMedia(base: string) {
+  return {
+    src: preferCdn(`${base}.mp4`),
+    poster: preferCdn(`${base}.jpg`),
+    onError: (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      const v = e.currentTarget;
+      if (new URL(v.src, window.location.href).origin !== window.location.origin) {
+        v.poster = `${base}.jpg`;
+        v.src = `${base}.mp4`;
+      }
+    },
+  };
+}
+
 /** Followers drift on loop and on slow devices; pull them back to the master. */
 const MAX_DRIFT = 0.15;
 
@@ -43,8 +63,7 @@ function Phone({
       <div className="relative aspect-[9/16] w-full overflow-hidden rounded-[20px] border-[4px] border-zinc-800 bg-black shadow-2xl shadow-black/60 ring-1 ring-white/15">
         <video
           ref={videoRef}
-          src={`${base}.mp4`}
-          poster={`${base}.jpg`}
+          {...demoMedia(base)}
           muted
           playsInline
           loop
@@ -176,8 +195,7 @@ export default function RealDemo({ onSample }: { onSample: () => void }) {
             <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-black ring-1 ring-white/10">
               <video
                 ref={source}
-                src={`${SRC}.mp4`}
-                poster={`${SRC}.jpg`}
+                {...demoMedia(SRC)}
                 muted
                 playsInline
                 loop
@@ -237,8 +255,7 @@ export function HeroShowcase() {
         <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-2xl shadow-black/60 ring-1 ring-white/15">
           <video
             ref={source}
-            src={`${TWO_SRC}.mp4`}
-            poster={`${TWO_SRC}.jpg`}
+            {...demoMedia(TWO_SRC)}
             muted
             playsInline
             loop
