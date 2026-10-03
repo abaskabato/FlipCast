@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
+import { fetchAsset } from '@/lib/asset-cdn';
 import { useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
 import FocusPicker from './focus-picker';
@@ -40,6 +41,7 @@ import { smoothPath, type SubjectPath } from '@/lib/video/tracking';
 import { importFromLink } from '@/lib/import/client';
 import { useFeatures } from '@/lib/features-client';
 import { CLIP_LENGTHS, toLines, type ClipLength, type ClipSuggestion } from '@/lib/clips/lines';
+import { findClipsLocally } from '@/lib/clips/local';
 import type { CaptionWord } from '@/lib/captions/captions';
 import { isWholeClip, planSplitSegments, type SplitSegment } from '@/lib/video/layout';
 import { CAPTION_STYLES, type CaptionStyleId } from '@/lib/captions/captions';
@@ -179,6 +181,8 @@ export default function FlipcastDashboard() {
   const [suggestions, setSuggestions] = useState<ClipSuggestion[] | null>(null);
   const [clipPhase, setClipPhase] = useState<{ label: string; progress: number } | null>(null);
   const [clipError, setClipError] = useState<string | null>(null);
+  /** Who picked the current suggestions: the AI, or the on-device ranker. */
+  const [clipSource, setClipSource] = useState<'ai' | 'device' | null>(null);
   const [trim, setTrim] = useState<Trim | null>(null);
   const [srt, setSrt] = useState<string | null>(null);
 
@@ -195,6 +199,9 @@ export default function FlipcastDashboard() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const signedIn = Boolean(session?.user);
+
+  /** AI picks are used when switched on for this site and the user is signed in. */
+  const aiClips = features.clips && signedIn;
 
   // ---- usage ------------------------------------------------------------
   const loadUsage = useCallback(async (): Promise<Usage | null> => {
@@ -639,7 +646,7 @@ export default function FlipcastDashboard() {
     document.getElementById('studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setSampleLoading(true);
     try {
-      const res = await fetch(SAMPLE_URL);
+      const res = await fetchAsset(SAMPLE_URL);
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
       setTrackingMode('smart_face');
@@ -672,15 +679,15 @@ export default function FlipcastDashboard() {
     }
   }, [linkUrl, acceptFile]);
 
-  /** Transcribe on this device, then ask the AI for stand-alone clips. */
+  /**
+   * Transcribe on this device, then rank stand-alone clips: with the AI when
+   * it is on for this site, otherwise (or if it fails) on this device.
+   */
   const findClipsNow = useCallback(async () => {
-    if (!signedIn) {
-      focusAccount();
-      return;
-    }
     if (!file || !meta) return;
     setClipError(null);
     setSuggestions(null);
+    setClipSource(null);
     try {
       let words = clipWords;
       if (!words) {
@@ -706,20 +713,31 @@ export default function FlipcastDashboard() {
       const lines = toLines(words);
       if (lines.length < 3) throw new Error('Not enough speech was found to pick clips from.');
       setClipPhase({ label: 'Picking the best moments…', progress: 0.9 });
-      const res = await fetch('/api/clips', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ length: clipLength, lines }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? 'Could not find clips right now.');
-      setSuggestions(body.clips ?? []);
+      if (aiClips) {
+        try {
+          const res = await fetch('/api/clips', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ length: clipLength, lines }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+          setSuggestions(body.clips ?? []);
+          setClipSource('ai');
+          return;
+        } catch (e) {
+          // The on-device ranker is always there; the user still gets picks.
+          console.warn('[clips] AI unavailable, ranking on this device:', e);
+        }
+      }
+      setSuggestions(findClipsLocally(lines, clipLength));
+      setClipSource('device');
     } catch (e) {
       setClipError(e instanceof Error ? e.message : 'Could not find clips right now.');
     } finally {
       setClipPhase(null);
     }
-  }, [signedIn, focusAccount, file, meta, clipWords, captionModel, clipLength]);
+  }, [aiClips, file, meta, clipWords, captionModel, clipLength]);
 
   /** From the landing CTAs: bring the studio into view and open the picker. */
   const startFromCta = () => {
@@ -766,7 +784,7 @@ export default function FlipcastDashboard() {
             <p className="mt-5 max-w-lg text-base leading-relaxed text-zinc-400 sm:text-lg">
               {features.clips
                 ? 'Drop in a long video and AI finds the moments worth posting, then cuts them into captioned vertical, square and widescreen clips that keep every speaker in frame.'
-                : 'Turn a horizontal video into captioned vertical, square and widescreen cuts that keep every speaker in frame, with split screen when two people are talking.'}{' '}
+                : 'Drop in a long video and Flipcast finds the moments worth posting, then cuts them into captioned vertical, square and widescreen clips that keep every speaker in frame.'}{' '}
               Ready for TikTok, Reels, Shorts and YouTube{features.youtube || features.tiktok ? ', and posted or scheduled from here.' : ' in one pass.'}
             </p>
             {/* The way in, the way Opus Clip and others lead: paste a link or upload. */}
@@ -1053,19 +1071,20 @@ export default function FlipcastDashboard() {
         </div>
       )}
 
-      {/* AI clip finding: for longer videos, pick the moments worth posting. */}
-      {features.clips && file && meta && meta.durationSeconds >= 60 && (
+      {/* Clip finding: for longer videos, pick the moments worth posting. */}
+      {file && meta && meta.durationSeconds >= 60 && (
         <div className="fc-card space-y-4 p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="fc-heading flex items-center gap-2">
                 <Wand2 className="h-5 w-5 text-pink-400" />
                 Find the best clips
-                <span className="fc-chip-accent !py-0.5">AI</span>
+                <span className="fc-chip-accent !py-0.5">{aiClips && clipSource !== 'device' ? 'AI' : 'On device'}</span>
               </h2>
               <p className="fc-body mt-1 max-w-xl">
-                Picks the moments that work on their own. Speech is transcribed on this device;
-                only the transcript text is sent to our AI. Your video never leaves it.
+                {aiClips
+                  ? 'Picks the moments that work on their own. Speech is transcribed on this device; only the transcript text is sent to our AI. Your video never leaves it.'
+                  : 'Picks the moments that work on their own: a strong opening, one idea, a clean ending. It all happens on this device, so nothing is uploaded.'}
               </p>
             </div>
             <div
@@ -1103,7 +1122,7 @@ export default function FlipcastDashboard() {
           ) : (
             <button onClick={() => void findClipsNow()} disabled={isRendering} className="fc-btn-primary">
               <Wand2 className="h-4 w-4" />
-              {signedIn ? (suggestions ? 'Find clips again' : 'Find clips') : 'Sign in to find clips'}
+              {suggestions ? 'Find clips again' : 'Find clips'}
             </button>
           )}
 
@@ -1116,6 +1135,13 @@ export default function FlipcastDashboard() {
 
           {suggestions && suggestions.length === 0 && (
             <p className="fc-body">No stand-alone moments stood out. Try a different clip length.</p>
+          )}
+
+          {suggestions && suggestions.length > 0 && clipSource === 'device' && (
+            <p className="fc-meta">
+              Ranked on this device from the speech: hooks, complete thoughts and pacing. Picks are sharpest for
+              English; timing and structure count in every language.
+            </p>
           )}
 
           {suggestions && suggestions.length > 0 && (

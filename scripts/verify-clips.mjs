@@ -19,7 +19,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
 
-import { toLines, toSuggestions, renderTranscript } from '../src/lib/clips/lines.ts';
+import { toLines, toSuggestions, renderTranscript, CLIP_LENGTHS } from '../src/lib/clips/lines.ts';
+import { findClipsLocally } from '../src/lib/clips/local.ts';
 import { buildArgs, planRender, wordsInTrim } from '../src/lib/video/ffmpeg-client.ts';
 
 let failed = 0;
@@ -96,6 +97,84 @@ const userText = JSON.stringify(seen?.body?.messages);
 check(userText.includes('[39] 3:15.0-') && userText.includes('30 to 60 seconds'), 'transcript and length range are in the request');
 check(found.length === 1 && found[0].title === 'The boring truth' && Math.abs(found[0].start - 19.85) < 1e-6,
   'the answer is mapped to times and cleaned up');
+
+// ---- on-device clip finding ------------------------------------------------------
+{
+  // A podcast-like transcript: rambling filler, two strong stand-alone
+  // stretches, and a stretch that leans on earlier context.
+  const parts = [];
+  let t = 0;
+  const speak = (sentences, pause = 0.35) => {
+    for (const s of sentences) {
+      parts.push(...say(s, t));
+      t += s.split(' ').length * 0.35 + pause;
+    }
+  };
+  speak(['So um welcome back everyone.', 'And uh yeah we have a lot to get through today.', 'Okay so before we start a quick thanks to everyone listening.', 'And yeah let us just kind of get into it I guess.'], 1.2);
+  t += 1.5;
+  const goodA = t;
+  speak([
+    "Here's the truth nobody tells you about pricing.",
+    'Most founders charge far too little because they are scared.',
+    'We raised our price three times in one year and lost almost no customers.',
+    'The customers who left were the ones costing us the most support time.',
+    'Pricing is the fastest lever you have and almost nobody pulls it.',
+    'That one change doubled our revenue!',
+  ]);
+  t += 1.5;
+  const weak = t;
+  speak([
+    'and so as I said earlier it was kind of like you know the same thing',
+    'and then they were like yeah we should probably do that too but',
+    'um it just sort of went on from there I mean you know how it is',
+    'and yeah that was that I guess so anyway',
+  ], 0.2);
+  t += 1.5;
+  const goodB = t;
+  speak([
+    'Why do most startups fail in their first year?',
+    'It is almost never the product.',
+    'They run out of money because they never talked to a single paying customer.',
+    'Talk to ten customers before you write a line of code.',
+    'That advice would have saved my first company.',
+  ]);
+  t += 1.5;
+  speak(['Anyway that is it for today.', 'Thanks for listening and see you next week.']);
+
+  const lines = toLines(parts);
+  const picks = findClipsLocally(lines, 'short', 4);
+  const { hardMin, hardMax } = CLIP_LENGTHS.short;
+  check(picks.length >= 2, `on-device: finds clips in a talk (${picks.length})`);
+  const startsNear = (c, at) => Math.abs(c.start - at) < 1;
+  check(picks.slice(0, 2).some((c) => startsNear(c, goodA)) && picks.slice(0, 2).some((c) => startsNear(c, goodB)),
+    `on-device: the two strong openings rank first (${picks.slice(0, 2).map((c) => c.start.toFixed(1)).join(', ')} vs ${goodA.toFixed(1)}, ${goodB.toFixed(1)})`);
+  check(!picks.some((c) => startsNear(c, weak)), 'on-device: never starts on "and so as I said earlier"');
+  check(picks.every((c) => c.end - c.start >= hardMin && c.end - c.start <= hardMax), 'on-device: every pick is within the length limits');
+  check(picks.every((c, i) => picks.every((d, j) => i === j || c.end <= d.start || d.end <= c.start)), 'on-device: picks do not overlap');
+  check(picks.every((c, i) => i === 0 || picks[i - 1].score >= c.score), 'on-device: best first');
+  const top = picks.find((c) => startsNear(c, goodB));
+  check(top?.title === 'Why do most startups fail in their first year?', `on-device: a question becomes the title ("${top?.title}")`);
+  check(picks.every((c) => c.title && c.title.length <= 61 && c.hook && c.reason), 'on-device: every pick has a title, hook and reason');
+  check(/question/i.test(top?.reason ?? ''), `on-device: the reason says why ("${top?.reason}")`);
+  check(JSON.stringify(findClipsLocally(lines, 'short', 4)) === JSON.stringify(picks), 'on-device: same input, same picks');
+  check(findClipsLocally(lines.slice(0, 1), 'short').length === 0, 'on-device: too little speech gives no picks');
+
+  // Speed: a two-hour transcript (about 2,400 lines) on this machine.
+  const long = [];
+  let lt = 0;
+  for (let i = 0; i < 2400; i++) {
+    const s = i % 7 === 0 ? 'Why does this matter so much for people building things?' : 'This is a sentence about building products and talking to customers every week.';
+    long.push(...say(s, lt));
+    lt += s.split(' ').length * 0.35 + 0.4;
+  }
+  const longLines = toLines(long);
+  for (const len of ['short', 'medium', 'long']) {
+    const t0 = performance.now();
+    const r = findClipsLocally(longLines, len);
+    const ms = performance.now() - t0;
+    check(r.length > 0 && ms < 3000, `on-device: ${len} clips from a ${Math.round(lt / 60)}-minute transcript in ${Math.round(ms)} ms`);
+  }
+}
 
 // ---- transcript onto a clip's timeline -------------------------------------------------
 const moved = wordsInTrim([{ text: 'a', start: 9, end: 9.5 }, { text: 'b', start: 10.2, end: 10.6 }, { text: 'c', start: 14.9, end: 15.4 }, { text: 'd', start: 16, end: 16.5 }], { start: 10, end: 15 });

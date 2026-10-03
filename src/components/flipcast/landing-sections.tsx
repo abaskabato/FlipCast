@@ -3,7 +3,6 @@ import {
   Captions,
   Check,
   Layers,
-  MousePointerClick,
   ScanFace,
   Send,
   ShieldCheck,
@@ -30,17 +29,11 @@ function steps(f: Features): Item[] {
       title: 'Drop in or link your video',
       body: 'Any MP4, MOV, WebM or MKV, from your device or a Dropbox or Google Drive link. It is processed in this tab.',
     },
-    f.clips
-      ? {
-          icon: Wand2,
-          title: 'Pick the moments and formats',
-          body: 'AI suggests the clips worth posting from a long video; choose 9:16, 1:1 and 16:9, with Auto-track on every one.',
-        }
-      : {
-          icon: MousePointerClick,
-          title: 'Pick formats and framing',
-          body: 'Choose 9:16, 1:1 and 16:9 at once. Auto-track follows the speaker, or set the framing yourself.',
-        },
+    {
+      icon: Wand2,
+      title: 'Pick the moments and formats',
+      body: `${f.clips ? 'AI suggests' : 'Flipcast suggests'} the clips worth posting from a long video; choose 9:16, 1:1 and 16:9, with Auto-track on every one.`,
+    },
     f.youtube || f.tiktok
       ? {
           icon: CalendarClock,
@@ -58,9 +51,9 @@ function steps(f: Features): Item[] {
 /** Feature cards; the optional ones appear only once switched on. */
 function features(f: Features): Item[] {
   return [
-    ...(f.clips
-      ? [{ icon: Wand2, title: 'AI finds the best clips', body: 'Drop in a podcast or long video and get stand-alone moments, titled and ranked. Your video stays on your device; only the transcript is analysed.' }]
-      : []),
+    f.clips
+      ? { icon: Wand2, title: 'AI finds the best clips', body: 'Drop in a podcast or long video and get stand-alone moments, titled and ranked. Your video stays on your device; only the transcript is analysed.' }
+      : { icon: Wand2, title: 'Finds the best clips', body: 'Drop in a podcast or long video and get stand-alone moments, titled and ranked by their hook and how cleanly they end. Found on your device, so nothing is uploaded.' },
     { icon: ScanFace, title: 'Auto-track', body: 'Face detection finds the speaker in every shot and glides the crop with them, with no jitter.' },
     { icon: Rows2, title: 'Split screen for podcasts', body: 'Two people on camera? The vertical cut stacks both speakers while they are on screen together, and switches back when it cuts to one.' },
     { icon: Captions, title: 'Captions in any language', body: 'Word-by-word captions in dozens of languages and every script, from Hindi to Japanese to Arabic. Five styles, plus an .srt file.' },
@@ -80,7 +73,7 @@ function faq(f: Features): { q: string; a: string }[] {
     { q: 'Do you upload my video?', a: `No. Rendering and transcription run in your browser, so your footage stays on your device.${f.clips ? ' Finding clips sends only the transcript text to our AI.' : ''}${f.tiktokScheduling ? ' A TikTok post you schedule for later is held privately until it goes out, then deleted.' : ''}` },
     { q: 'Which languages do captions support?', a: 'Dozens, detected automatically, including Spanish, Portuguese, French, German, Hindi, Arabic, Japanese, Korean and Chinese, each drawn in a font made for its script.' },
     { q: 'How long can my videos be?', a: `Up to ${MAX_SOURCE_SECONDS.free / 60} minutes per video on Free, ${MAX_SOURCE_SECONDS.creator / 60} on Creator and ${MAX_SOURCE_SECONDS.agency / 60} on Agency, and up to ${Math.round(BROWSER_MAX_INPUT_BYTES / 1024 / 1024)} MB, since the video is processed in your browser.` },
-    ...(f.clips ? [{ q: 'Can it find clips in a long video?', a: 'Yes. Load a video over a minute long and choose "Find clips". AI suggests stand-alone moments of the length you pick; render the ones you like.' }] : []),
+    { q: 'Can it find clips in a long video?', a: `Yes. Load a video over a minute long and choose "Find clips". ${f.clips ? 'AI suggests' : 'Flipcast suggests'} stand-alone moments of the length you pick; render the ones you like.${f.clips ? '' : ' The picks are made on your device.'}` },
     ...(f.youtube || f.tiktok ? [{ q: 'Can I post straight to social media?', a: `Yes: connect ${[f.youtube && 'YouTube', f.tiktok && 'TikTok'].filter(Boolean).join(' and ')} and post or schedule from the finished clip. Everything else can be downloaded or shared to any app.` }] : []),
     { q: 'What does it run on?', a: 'Any recent desktop browser, and most phones. A faster computer renders faster, because the work happens on your device.' },
   ];
