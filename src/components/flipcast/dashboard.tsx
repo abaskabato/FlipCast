@@ -1456,7 +1456,11 @@ export default function FlipcastDashboard() {
                     {o.width}×{o.height} · {formatBytes(o.sizeBytes)}
                   </p>
                 </div>
-                <ShareActions output={o} onDownload={downloadOutput} />
+                <ShareActions
+                  output={o}
+                  onDownload={downloadOutput}
+                  durationSec={trim ? trim.end - trim.start : (meta?.durationSeconds ?? 0)}
+                />
               </div>
             ))}
           </div>

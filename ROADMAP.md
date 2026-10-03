@@ -150,6 +150,47 @@ end to end through the in-browser engine.
    and set the `STRIPE_*` variables it prints in Vercel (Production).
 3. **Vercel Pro**: Hobby is for non-commercial use; required before charging.
 
+## 3d. Publishing and scheduling to YouTube and TikTok (2026-10-03)
+
+- **Connect** YouTube channels and TikTok accounts with OAuth (popup from the
+  publish dialog, or the Account page). Tokens are encrypted with AES-256-GCM
+  (`SOCIAL_TOKEN_KEY`); OAuth state is signed and bound to the user, platform
+  and a browser cookie; tokens refresh automatically and a revoked grant asks
+  the user to reconnect.
+- **YouTube**: the server opens a resumable upload session; the browser uploads
+  the clip straight to YouTube. Scheduling is native (`publishAt`), so nothing
+  is stored and nothing runs on our side at publish time.
+- **TikTok now**: Direct Post with the browser uploading chunks straight to
+  TikTok. The form follows TikTok's posting rules (account shown, privacy
+  chosen with no default, interaction settings, commercial-content
+  disclosure, music-usage consent) so the app can pass TikTok's audit.
+- **TikTok scheduled**: the rendered clip waits in private Vercel Blob storage;
+  `/api/social/cron` claims due posts (safe against overlapping runs), streams
+  them to TikTok in planned chunks, checks the outcome, retries twice, and
+  deletes the stored clip once done or canceled.
+- New tables `social_accounts` and `scheduled_posts` (`drizzle/0002_social_publishing.sql`,
+  additive only).
+
+Verified by `verify:social` (26 checks against stand-ins for Google and TikTok
+and a local Postgres) and browser tests of the publish dialog.
+
+### Turning publishing on
+
+1. `npm run db:migrate` against production (adds two tables; touches nothing else).
+2. `SOCIAL_TOKEN_KEY` (`openssl rand -base64 32`) in Vercel.
+3. YouTube: Google Cloud project, YouTube Data API v3, OAuth consent screen
+   (the `youtube.upload` scope needs Google verification for more than 100
+   users; until the API project is audited, uploads are private), web OAuth
+   client with redirect `https://flipcast.dev/api/social/youtube/callback`;
+   set `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`.
+4. TikTok: developer app with Login Kit + Content Posting API (Direct Post),
+   redirect `https://flipcast.dev/api/social/tiktok/callback`; set
+   `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET`; apply for the audit (posts are
+   private until approved; review takes weeks).
+5. TikTok scheduling (after Vercel Pro): private Blob store, `CRON_SECRET`,
+   `SOCIAL_SCHEDULER_ENABLED=1`, and the cron entry in `vercel.json`
+   (see `.env.example`).
+
 Known limits: Auto-track needs a format the browser can decode
 (falls back to centre otherwise); transcription speed depends on the device.
 

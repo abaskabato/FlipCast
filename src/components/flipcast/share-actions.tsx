@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Download, ExternalLink, Share2 } from 'lucide-react';
+import { CalendarClock, Download, ExternalLink, Share2 } from 'lucide-react';
+
+import { getSocialConfig } from '@/lib/social/client';
+import PublishDialog from './publish-dialog';
 
 import type { RenderedOutput } from '@/lib/video/ffmpeg-client';
 import type { Ratio } from '@/lib/video/geometry';
@@ -67,10 +70,21 @@ function asFile(output: RenderedOutput): File {
 export default function ShareActions({
   output,
   onDownload,
+  durationSec,
 }: {
   output: RenderedOutput;
   onDownload: (output: RenderedOutput) => void;
+  /** The clip's length, for TikTok's per-account duration limit. */
+  durationSec: number;
 }) {
+  // Publish directly only when this deployment has a platform set up.
+  const [canPublish, setCanPublish] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  useEffect(() => {
+    getSocialConfig()
+      .then((c) => setCanPublish(c.youtube || c.tiktok))
+      .catch(() => setCanPublish(false));
+  }, []);
   // Decided after mount: navigator is absent during server render, and
   // canShare depends on the actual file (some browsers cap shareable size).
   const [canShareFile, setCanShareFile] = useState(false);
@@ -108,6 +122,13 @@ export default function ShareActions({
 
   return (
     <div className="mt-auto space-y-3">
+      {canPublish && (
+        <button onClick={() => setPublishing(true)} className="fc-btn-primary w-full">
+          <CalendarClock className="h-4 w-4" />
+          Publish or schedule
+        </button>
+      )}
+      {publishing && <PublishDialog output={output} durationSec={durationSec} onClose={() => setPublishing(false)} />}
       <div className="flex gap-2">
         {canShareFile && (
           <button onClick={() => void share()} className="fc-btn-primary flex-1">
@@ -117,7 +138,7 @@ export default function ShareActions({
         )}
         <button
           onClick={() => onDownload(output)}
-          className={canShareFile ? 'fc-btn-secondary' : 'fc-btn-primary w-full'}
+          className={canShareFile || canPublish ? 'fc-btn-secondary flex-1' : 'fc-btn-primary w-full'}
           aria-label={`Download ${output.ratio}`}
         >
           <Download className="h-4 w-4" />

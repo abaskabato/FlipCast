@@ -24,7 +24,8 @@
     "verify:captions": "node --import ./scripts/ts-register.mjs scripts/verify-captions.mjs",
     "verify:layout": "node --import ./scripts/ts-register.mjs scripts/verify-layout.mjs",
     "verify:import": "node --import ./scripts/ts-register.mjs scripts/verify-import.mjs",
-    "verify:clips": "node --import ./scripts/ts-register.mjs scripts/verify-clips.mjs"
+    "verify:clips": "node --import ./scripts/ts-register.mjs scripts/verify-clips.mjs",
+    "verify:social": "node --import ./scripts/ts-register.mjs scripts/verify-social.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
@@ -38,6 +39,7 @@
     "@ffmpeg/util": "^0.12.2",
     "@huggingface/transformers": "^4.3.0",
     "@mediapipe/tasks-vision": "^1.0.1",
+    "@vercel/blob": "^2.8.0",
     "better-auth": "^1.7.6",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.3",

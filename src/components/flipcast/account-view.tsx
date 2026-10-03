@@ -23,6 +23,7 @@ import {
   Loader2,
   ShieldCheck,
   Sparkles,
+  Share2,
   Trash2,
   UserRound,
   type LucideIcon,
@@ -34,6 +35,7 @@ import { formatDuration, formatQuota } from '@/lib/quotas';
 import { formatBytes } from '@/lib/video/probe';
 import { Avatar, displayName, SiteHeader } from './site-header';
 import { SiteFooter } from './site-chrome';
+import ConnectionsPanel from './connections-panel';
 
 const AUTH_LOCALIZATION = authLocalization as unknown as Record<string, unknown>;
 
@@ -75,6 +77,7 @@ const CARD: SettingsCardClassNames = {
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'profile', label: 'Profile', icon: UserRound },
   { id: 'plan', label: 'Plan & billing', icon: CreditCard },
+  { id: 'connections', label: 'Connections', icon: Share2 },
   { id: 'history', label: 'Render history', icon: Film },
   { id: 'security', label: 'Security', icon: ShieldCheck },
   { id: 'danger', label: 'Delete account', icon: Trash2 },
@@ -331,6 +334,13 @@ export default function AccountView() {
                 <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
               )}
             </div>
+
+            <SectionTitle
+              id="connections"
+              title="Connections"
+              subtitle="YouTube channels and TikTok accounts you can publish to, and what you have posted or scheduled."
+            />
+            <ConnectionsPanel />
 
             <SectionTitle
               id="history"

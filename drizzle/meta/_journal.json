@@ -15,6 +15,13 @@
       "when": 1790875475773,
       "tag": "0001_dual_format_outputs",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791037573287,
+      "tag": "0002_social_publishing",
+      "breakpoints": true
     }
   ]
 }
