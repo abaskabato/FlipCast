@@ -14,14 +14,15 @@
     "verify:render": "node scripts/verify-render.mjs",
     "verify:e2e": "node scripts/verify-e2e.mjs",
     "check:env": "node scripts/check-env.mjs",
-    "verify": "npm run verify:geometry && npm run verify:expr && npm run verify:probe && npm run verify:plan && npm run verify:track && npm run verify:captions && npm run verify:render",
+    "verify": "npm run verify:geometry && npm run verify:expr && npm run verify:probe && npm run verify:plan && npm run verify:track && npm run verify:layout && npm run verify:captions && npm run verify:render",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "auth:generate": "npx @better-auth/cli generate --config src/lib/auth.ts --output src/db/auth-schema.ts",
     "verify:plan": "node --import ./scripts/ts-register.mjs scripts/verify-plan.mjs",
     "verify:track": "node --import ./scripts/ts-register.mjs scripts/verify-track.mjs",
-    "verify:captions": "node --import ./scripts/ts-register.mjs scripts/verify-captions.mjs"
+    "verify:captions": "node --import ./scripts/ts-register.mjs scripts/verify-captions.mjs",
+    "verify:layout": "node --import ./scripts/ts-register.mjs scripts/verify-layout.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1141.0",

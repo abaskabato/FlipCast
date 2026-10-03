@@ -18,6 +18,7 @@
 import { loadFFmpegClass, type FFmpegInstance } from './ffmpeg-loader';
 import { filterExpr, outputCanvas, type Focus, type Ratio } from './geometry';
 import { focusTrackFor, type FocusTrack, type SubjectPath } from './tracking';
+import { splitFilter, type SplitLayout } from './layout';
 import {
   CAPTION_FONT_FILE,
   buildAss,
@@ -232,6 +233,8 @@ export async function renderToRatios(
     source?: SourceInfo | null;
     /** Subject path from subject-detect.ts; the crop follows it. Needs `source`. */
     track?: SubjectPath | null;
+    /** Two people on camera together (layout.ts): 9:16 stacks them. Needs `source`. */
+    split?: SplitLayout | null;
     captions?: CaptionRequest | null;
   } = {},
 ): Promise<RenderResult> {
@@ -277,6 +280,13 @@ export async function renderToRatios(
     if (opts.track && opts.source) {
       for (const item of plan) {
         if (!item.copy) item.track = focusTrackFor(opts.track, item.ratio, opts.source.width, opts.source.height);
+      }
+    }
+    if (opts.split && opts.source) {
+      for (const item of plan) {
+        if (!item.copy && item.ratio === '9:16') {
+          item.split = { layout: opts.split, srcW: opts.source.width, srcH: opts.source.height };
+        }
       }
     }
 
@@ -409,6 +419,8 @@ type PlannedOutput = {
   track?: FocusTrack;
   /** ASS file in the ffmpeg FS to burn in. */
   subtitles?: string;
+  /** Stack two people top and bottom instead of cropping one window. */
+  split?: { layout: SplitLayout; srcW: number; srcH: number };
 };
 
 /** Decide size and copy-vs-encode per output. Pure, so the UI can show it. */
@@ -450,15 +462,14 @@ export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus 
     const branches = encoded.map((_, i) => `[s${i}]`).join('');
     const graph = [
       encoded.length > 1 ? `[0:v]split=${encoded.length}${branches}` : null,
-      ...encoded.map(
-        (p, i) =>
-          `${encoded.length > 1 ? `[s${i}]` : '[0:v]'}${filterExpr(
-            p.ratio,
-            p.track ?? focus,
-            p.canvas,
-            p.subtitles ? `subtitles=filename=${p.subtitles}:fontsdir=${FONTS_DIR}` : null,
-          )}[v${i}]`,
-      ),
+      ...encoded.map((p, i) => {
+        const input = encoded.length > 1 ? `[s${i}]` : '[0:v]';
+        const overlay = p.subtitles ? `subtitles=filename=${p.subtitles}:fontsdir=${FONTS_DIR}` : null;
+        if (p.split) {
+          return splitFilter(p.split.layout, p.split.srcW, p.split.srcH, p.canvas, input, `[v${i}]`, `p${i}`, overlay);
+        }
+        return `${input}${filterExpr(p.ratio, p.track ?? focus, p.canvas, overlay)}[v${i}]`;
+      }),
     ].filter(Boolean);
     args.push('-filter_complex', graph.join(';'));
   }

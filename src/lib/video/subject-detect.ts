@@ -13,12 +13,18 @@
  * the frame width. So each frame is also scanned as overlapping squares along
  * its long side, which makes a small face proportionally three times larger to
  * the detector. Detections from all passes are merged.
+ *
+ * Wide two-shots defeat a face model even with tiles: speakers turned towards
+ * each other are in profile. So when fewer than two faces are found, a person
+ * detector (EfficientDet-Lite0) also runs, and each person with no face inside
+ * their box contributes a head estimated from the top of that box.
  */
 
-import { sampleTimes, type SubjectSample } from './tracking';
+import { sampleTimes, type FaceBox, type SubjectSample } from './tracking';
 
 const WASM_BASE = '/mediapipe';
 const MODEL_URL = '/models/blaze_face_short_range.tflite';
+const PERSON_MODEL_URL = '/models/efficientdet_lite0.tflite';
 
 /** Long side the frame is drawn at before detection. Plenty for a 128px model. */
 const FRAME_LONG_SIDE = 960;
@@ -43,7 +49,63 @@ export class TrackingUnavailableError extends Error {
   }
 }
 
+type PersonDetector = {
+  detect(image: HTMLCanvasElement): {
+    detections: {
+      boundingBox?: { originX: number; originY: number; width: number; height: number };
+    }[];
+  };
+};
+
 let detectorPromise: Promise<Detector> | null = null;
+let personPromise: Promise<PersonDetector | null> | null = null;
+
+/** The person detector is a helper: if it cannot load, faces alone still work. */
+async function getPersonDetector(): Promise<PersonDetector | null> {
+  personPromise ??= (async () => {
+    try {
+      const { ObjectDetector, FilesetResolver } = await import('@mediapipe/tasks-vision');
+      const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+      return (await ObjectDetector.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: PERSON_MODEL_URL, delegate: 'CPU' },
+        runningMode: 'IMAGE',
+        categoryAllowlist: ['person'],
+        scoreThreshold: 0.4,
+        maxResults: 4,
+      })) as unknown as PersonDetector;
+    } catch (e) {
+      console.warn('[track] person detector unavailable:', e);
+      return null;
+    }
+  })();
+  return personPromise;
+}
+
+/**
+ * Heads of detected people who have no detected face, as face-shaped boxes.
+ * A seated or standing person's head is about the top fifth of their box and
+ * about a third of its width; small people (background, posters) are ignored.
+ */
+function headsFromPeople(people: PersonDetector, frame: HTMLCanvasElement, faces: Box[]): Box[] {
+  const W = frame.width;
+  const H = frame.height;
+  const heads: Box[] = [];
+  for (const d of people.detect(frame).detections) {
+    const b = d.boundingBox;
+    if (!b || b.height < H * 0.25) continue;
+    const box = { x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H };
+    const hasFace = faces.some((f) => {
+      const cx = f.x + f.w / 2;
+      const cy = f.y + f.h / 2;
+      return cx > box.x && cx < box.x + box.w && cy > box.y && cy < box.y + box.h;
+    });
+    if (hasFace) continue;
+    const hw = Math.min(box.w * 0.4, (box.h * 0.2 * H) / W);
+    const hh = (hw * W) / H;
+    heads.push({ x: box.x + box.w / 2 - hw / 2, y: box.y + box.h * 0.04, w: hw, h: hh, score: 0.5 });
+  }
+  return heads;
+}
 
 async function getDetector(): Promise<Detector> {
   detectorPromise ??= (async () => {
@@ -188,7 +250,11 @@ export async function detectSubject(
   duration: number,
   opts: { signal?: AbortSignal; onProgress?: (fraction: number) => void } = {},
 ): Promise<SubjectSample[]> {
-  const [detector, { video, release }] = await Promise.all([getDetector(), openVideo(file)]);
+  const [detector, people, { video, release }] = await Promise.all([
+    getDetector(),
+    getPersonDetector(),
+    openVideo(file),
+  ]);
   try {
     const scale = FRAME_LONG_SIDE / Math.max(video.videoWidth, video.videoHeight);
     const frame = document.createElement('canvas');
@@ -207,14 +273,18 @@ export async function detectSubject(
       if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       await seek(video, times[i]);
       fctx.drawImage(video, 0, 0, frame.width, frame.height);
-      const subject = pickSubject(detectFaces(detector, frame, tile), prev);
+      let found = detectFaces(detector, frame, tile);
+      if (found.length < 2 && people) found = [...found, ...headsFromPeople(people, frame, found)];
+      // Every face, for the split-screen decision (layout.ts).
+      const faces: FaceBox[] = found.map((f) => ({ cx: f.x + f.w / 2, cy: f.y + f.h * 0.45, w: f.w }));
+      const subject = pickSubject(found, prev);
       if (subject) {
         // Centre on the eyes rather than the middle of the box, which keeps
         // natural headroom when the crop also moves vertically.
         prev = { x: subject.x + subject.w / 2, y: subject.y + subject.h * 0.45 };
-        samples.push({ t: times[i], ...prev });
+        samples.push({ t: times[i], ...prev, faces });
       } else {
-        samples.push({ t: times[i], x: null, y: null });
+        samples.push({ t: times[i], x: null, y: null, faces });
       }
       opts.onProgress?.((i + 1) / times.length);
     }

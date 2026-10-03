@@ -11,7 +11,7 @@ import {
   Sparkles,
   Upload,
   X,
-  Zap,
+  Rows2,
 } from 'lucide-react';
 
 import { formatQuota, TIER_LIMITS } from '@/lib/quotas';
@@ -61,9 +61,9 @@ const FEATURES = [
     body: 'Not on Free, not on any plan. Your clips go out looking like yours.',
   },
   {
-    icon: Zap,
-    title: 'No upload, no queue',
-    body: 'Skip the progress bar for a 2 GB upload and the wait behind other people’s renders.',
+    icon: Rows2,
+    title: 'Split screen for podcasts',
+    body: 'Two people on camera? The vertical cut stacks both speakers, so nobody gets cropped out.',
   },
 ];
 

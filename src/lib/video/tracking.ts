@@ -14,8 +14,16 @@
 
 import { cropFor, type Ratio } from './geometry';
 
-/** One detector sample: subject centre in frame fractions, or null if none seen. */
-export type SubjectSample = { t: number; x: number; y: number } | { t: number; x: null; y: null };
+/** A detected face: centre and width, in frame fractions. */
+export type FaceBox = { cx: number; cy: number; w: number };
+
+/**
+ * One detector sample: subject centre in frame fractions, or null if none seen.
+ * `faces` lists every face in the frame, for the split-screen layout (layout.ts).
+ */
+export type SubjectSample = ({ t: number; x: number; y: number } | { t: number; x: null; y: null }) & {
+  faces?: FaceBox[];
+};
 
 /** Subject centre over time, in frame fractions (0..1), with ascending times. */
 export type SubjectPath = { t: number[]; x: number[]; y: number[] };

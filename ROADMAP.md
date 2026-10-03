@@ -96,6 +96,14 @@ fit the on-device model:
   libass in three styles; an .srt is offered too. Verified by
   `verify:captions` against a real libass.
 
+- **Split screen.** When two similar-sized people are on camera together for
+  most of a clip and too far apart for one 9:16 window, `layout.ts` stacks a
+  crop of each (left speaker on top) in the 9:16 output; other shapes keep the
+  tracked crop. Detection falls back to an EfficientDet person detector when
+  BlazeFace finds fewer than two faces, which is what makes profile speakers in
+  wide podcast shots detectable. Verified by `verify:layout` and on real
+  footage (public/demo/twoshot-*).
+
 Not done, deliberately: AI clip selection and scheduled posting. Both need
 server-side AI or platform API approvals (TikTok/Meta app review), and the
 first would break "your footage never leaves your device".

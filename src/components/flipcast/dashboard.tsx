@@ -29,6 +29,7 @@ import ShareActions from './share-actions';
 import { renderToRatios, RenderAbortedError, type RenderedOutput } from '@/lib/video/ffmpeg-client';
 import { detectSubject, TrackingUnavailableError } from '@/lib/video/subject-detect';
 import { smoothPath, type SubjectPath } from '@/lib/video/tracking';
+import { planSplit, type SplitLayout } from '@/lib/video/layout';
 import { CAPTION_STYLES, type CaptionStyleId } from '@/lib/captions/captions';
 import { transcribe } from '@/lib/captions/transcribe';
 import {
@@ -48,10 +49,9 @@ import {
 import { openBillingPortal, startCheckout } from '@/lib/billing/client';
 import { isBillingPeriod, isPaidTier } from '@/lib/billing/plans';
 import { SiteFooter } from './site-chrome';
-import HeroVisual from './hero-visual';
 import LandingSections from './landing-sections';
 import LiveDemo from './live-demo';
-import RealDemo from './real-demo';
+import RealDemo, { HeroShowcase } from './real-demo';
 import { displayName, SiteHeader } from './site-header';
 
 type TargetRatio = Ratio;
@@ -146,6 +146,8 @@ export default function FlipcastDashboard() {
   const [trackingMode, setTrackingMode] = useState<TrackingMode>('auto_center');
   // Manual crop focal point, as fractions of the frame. Applies to every output.
   const [focus, setFocus] = useState<Focus>(CENTER_FOCUS);
+  // Auto-track only: stack two people in the 9:16 cut when both are on camera.
+  const [splitOn, setSplitOn] = useState(true);
   const [captionsOn, setCaptionsOn] = useState(false);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyleId>('bold');
   const [srt, setSrt] = useState<string | null>(null);
@@ -396,6 +398,7 @@ export default function FlipcastDashboard() {
       // Auto-track: find the subject first, then render with a moving crop.
       // Takes the first 15% of the bar. Any failure falls back to centred.
       let track: SubjectPath | null = null;
+      let split: SplitLayout | null = null;
       const trackShare = trackingMode === 'smart_face' ? 0.15 : 0;
       if (trackingMode === 'smart_face') {
         setPhase('Finding the speaker…');
@@ -409,6 +412,10 @@ export default function FlipcastDashboard() {
           });
           track = smoothPath(samples);
           if (!track) notes.push('No face was found, so the clip was framed from the centre.');
+          if (splitOn && targets.includes('9:16')) {
+            split = planSplit(samples, meta.width, meta.height);
+            if (split) notes.push('Two people were on camera together, so the 9:16 cut uses split screen.');
+          }
         } catch (e) {
           if (controller.signal.aborted) throw new RenderAbortedError();
           notes.push(
@@ -425,6 +432,7 @@ export default function FlipcastDashboard() {
         // over time; otherwise framing stays centred.
         focus: trackingMode === 'manual_crop' ? focus : null,
         track,
+        split,
         // Lets the engine size outputs to the source and copy instead of
         // re-encoding where the output would be identical.
         source: meta,
@@ -501,6 +509,7 @@ export default function FlipcastDashboard() {
     targets,
     trackingMode,
     focus,
+    splitOn,
     captionsOn,
     captionStyle,
     usage,
@@ -620,11 +629,11 @@ export default function FlipcastDashboard() {
 
       {/* Pitch for first-time visitors. Signed-in users go straight to work. */}
       {!sessionPending && !signedIn && (
-        <section className="grid items-center gap-12 pb-4 pt-6 md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:pt-14 lg:gap-16">
+        <section className="grid items-center gap-12 pb-4 pt-6 md:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] md:pt-14 lg:gap-16">
           <div>
             <p className="fc-chip-accent">
               <Sparkles className="h-3.5 w-3.5" />
-              Auto-track + captions, free, in your browser
+              New: split screen for two-person podcasts
             </p>
             <h1 className="fc-display mt-5 max-w-xl text-5xl font-extrabold leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-7xl">
               One clip in.{' '}
@@ -632,7 +641,8 @@ export default function FlipcastDashboard() {
             </h1>
             <p className="mt-5 max-w-lg text-base leading-relaxed text-zinc-400 sm:text-lg">
               Turn a horizontal video into captioned vertical, square and widescreen cuts that
-              keep the speaker in frame. Ready for TikTok, Reels, Shorts and YouTube in one pass.
+              keep every speaker in frame, with split screen when two people are talking. Ready
+              for TikTok, Reels, Shorts and YouTube in one pass.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
               <button
@@ -674,7 +684,7 @@ export default function FlipcastDashboard() {
             </div>
           </div>
 
-          <HeroVisual />
+          <HeroShowcase />
         </section>
       )}
 
@@ -947,6 +957,25 @@ export default function FlipcastDashboard() {
               );
             })}
           </div>
+
+          {trackingMode === 'smart_face' && (
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+              <input
+                type="checkbox"
+                checked={splitOn}
+                onChange={(e) => setSplitOn(e.target.checked)}
+                disabled={isRendering}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-pink-500"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-white">Split screen for two speakers</span>
+                <span className="fc-meta mt-0.5 block !text-zinc-400">
+                  When two people are on camera together, the 9:16 cut stacks them top and
+                  bottom so neither gets cropped out. Ideal for podcasts and interviews.
+                </span>
+              </span>
+            </label>
+          )}
 
           {trackingMode === 'manual_crop' &&
             (file ? (
