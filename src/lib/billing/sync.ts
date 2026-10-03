@@ -78,3 +78,26 @@ export async function resetUsageWindow(userId: string): Promise<void> {
     .set({ usagePeriodStart: new Date(), updatedAt: new Date() })
     .where(eq(userTable.id, userId));
 }
+
+/**
+ * Close a user's Stripe customer before their account is deleted.
+ *
+ * Deleting the customer cancels every subscription on it immediately, so a
+ * deleted account can never be charged again. Throws when Stripe is
+ * configured but the call fails: the caller should then refuse the deletion
+ * rather than leave a live subscription with no account behind it.
+ */
+export async function closeBillingAccount(userId: string): Promise<void> {
+  const customerId = await getStripeCustomerId(userId);
+  if (!customerId) return;
+  const { stripe } = await import('./stripe');
+  const client = stripe();
+  if (!client) return;
+  try {
+    await client.customers.del(customerId);
+  } catch (e) {
+    // Already gone on Stripe's side is the outcome we wanted.
+    if ((e as { code?: string }).code === 'resource_missing') return;
+    throw e;
+  }
+}

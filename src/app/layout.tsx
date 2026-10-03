@@ -1,8 +1,17 @@
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
+import { Bricolage_Grotesque, DM_Sans } from 'next/font/google';
 // better-auth-ui's CSS is pulled in from globals.css via @import, so that it
 // is processed in the same PostCSS pass as the @tailwind directives it needs.
 import './globals.css';
+
+// Self-hosted by next/font, so they satisfy the site's COEP require-corp header.
+const sans = DM_Sans({ subsets: ['latin'], variable: '--font-sans', display: 'swap' });
+const display = Bricolage_Grotesque({
+  subsets: ['latin'],
+  variable: '--font-display',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'Flipcast — Reframe one clip for every platform, in your browser',
@@ -18,15 +27,15 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#020617',
+  themeColor: '#0b0912',
   width: 'device-width',
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen text-slate-50 antialiased">{children}</body>
+    <html lang="en" suppressHydrationWarning className={`${sans.variable} ${display.variable}`}>
+      <body className="min-h-screen font-sans text-zinc-50 antialiased">{children}</body>
     </html>
   );
 }

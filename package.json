@@ -14,12 +14,14 @@
     "verify:render": "node scripts/verify-render.mjs",
     "verify:e2e": "node scripts/verify-e2e.mjs",
     "check:env": "node scripts/check-env.mjs",
-    "verify": "npm run verify:geometry && npm run verify:expr && npm run verify:probe && npm run verify:plan && npm run verify:render",
+    "verify": "npm run verify:geometry && npm run verify:expr && npm run verify:probe && npm run verify:plan && npm run verify:track && npm run verify:captions && npm run verify:render",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "auth:generate": "npx @better-auth/cli generate --config src/lib/auth.ts --output src/db/auth-schema.ts",
-    "verify:plan": "node --import ./scripts/ts-register.mjs scripts/verify-plan.mjs"
+    "verify:plan": "node --import ./scripts/ts-register.mjs scripts/verify-plan.mjs",
+    "verify:track": "node --import ./scripts/ts-register.mjs scripts/verify-track.mjs",
+    "verify:captions": "node --import ./scripts/ts-register.mjs scripts/verify-captions.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1141.0",
@@ -30,6 +32,8 @@
     "@ffmpeg/core-mt": "^0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@huggingface/transformers": "^4.3.0",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "better-auth": "^1.7.6",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.3",
@@ -38,6 +42,7 @@
     "pg": "^8.13.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sonner": "^2.0.8",
     "stripe": "^22.6.2",
     "tailwind-merge": "^2.5.2",
     "zod": "^4.6.5"

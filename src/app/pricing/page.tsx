@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import PricingPlans from '@/components/flipcast/pricing-plans';
 import { SiteFooter } from '@/components/flipcast/site-chrome';
+import { SiteHeader } from '@/components/flipcast/site-header';
 
 /**
  * Public pricing page.
@@ -22,6 +22,14 @@ const billingEnabled = Boolean(
   process.env.STRIPE_SECRET_KEY?.trim() && process.env.STRIPE_PRICE_CREATOR_MONTHLY?.trim(),
 );
 
+/** Checked against Opus Clip's public pricing, 2026-10. Kept unnamed so it ages well. */
+const GAP: [feature: string, elsewhere: string][] = [
+  ['9:16, 1:1 and 16:9 from one video', 'From $29/mo'],
+  ['Tracking that follows the speaker', 'From $29/mo'],
+  ['Captions without a watermark', 'Paid plans'],
+  ['Exports that never expire', 'Deleted after days on free'],
+];
+
 const FAQ = [
   {
     q: 'What counts toward my minutes?',
@@ -32,36 +40,79 @@ const FAQ = [
     a: 'Rendering happens on your own device, so there is no upload, no render farm and no storage bill for us to pass on.',
   },
   {
+    q: 'Are captions and auto-track extra?',
+    a: 'No. Every plan, including Free, gets word-by-word captions in three styles, an .srt file, and auto-track that keeps the speaker in frame. No watermark on any plan.',
+  },
+  {
     q: 'Can I cancel?',
     a: 'Any time, from “Manage billing”. You keep your plan until the end of the period you paid for.',
   },
   {
     q: 'Is my footage private?',
-    a: 'Yes. Videos never leave your browser. Only details like duration and format reach our server.',
+    a: 'Yes. Videos never leave your browser, and captions are transcribed on your device too. Only details like duration and format reach our server.',
   },
 ];
 
 export default function PricingPage() {
   return (
-    <main className="min-h-screen px-5 pb-8 pt-12 text-slate-100">
-      <div className="mx-auto max-w-5xl">
-        <div className="text-center">
-          <Link href="/" className="fc-link mx-auto">
-            ← Back to Flipcast
-          </Link>
-          <h1 className="mt-6 text-4xl font-bold tracking-tight text-white sm:text-5xl">
-            Simple pricing, private by design
+    <main className="min-h-screen p-4 pb-8 text-zinc-100 md:p-8">
+      <div className="mx-auto max-w-6xl px-1 py-2 sm:px-2">
+        <SiteHeader />
+        <div className="mt-12 text-center">
+          <h1 className="fc-display text-5xl font-extrabold tracking-tight text-white sm:text-6xl">
+            Post more. <span className="fc-gradient-text">Pay less.</span>
           </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-slate-400">
-            Pay for the minutes of footage you reframe. Every plan gets every format, and your
-            video never leaves your device.
+          <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-zinc-400">
+            Hours of footage for less than cloud tools charge for minutes. Every plan gets auto
+            captions, auto-track and every format, with no watermark, and your video never
+            leaves your device.
           </p>
         </div>
 
         <PricingPlans billingEnabled={billingEnabled} />
 
         <section className="mx-auto mt-16 max-w-3xl">
-          <h2 className="text-center text-xl font-semibold text-white">Questions</h2>
+          <h2 className="fc-display text-center text-3xl font-bold text-white">
+            Paid elsewhere. <span className="fc-gradient-text">Free here.</span>
+          </h2>
+          <p className="fc-body mx-auto mt-2 max-w-xl text-center">
+            Popular AI clipping tools keep these behind paid plans, some at $29 a month. On Flipcast
+            they are in the free plan.
+          </p>
+          <div className="fc-card mt-6 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/[0.06]">
+                  <th scope="col" className="p-4 text-left font-medium text-zinc-500">
+                    <span className="sr-only">Feature</span>
+                  </th>
+                  <th scope="col" className="w-32 p-4 text-center font-medium text-zinc-400 sm:w-44">
+                    Elsewhere
+                  </th>
+                  <th scope="col" className="w-32 bg-pink-500/[0.06] p-4 text-center font-bold text-white sm:w-44">
+                    Flipcast Free
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {GAP.map(([feature, elsewhere]) => (
+                  <tr key={feature} className="border-b border-white/[0.04] last:border-0">
+                    <th scope="row" className="p-4 text-left font-medium text-zinc-200">
+                      {feature}
+                    </th>
+                    <td className="p-4 text-center text-xs text-zinc-500">{elsewhere}</td>
+                    <td className="bg-pink-500/[0.06] p-4 text-center font-semibold text-emerald-400">
+                      Included
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="mx-auto mt-16 max-w-3xl">
+          <h2 className="fc-display text-center text-3xl font-bold text-white">Questions</h2>
           <dl className="mt-6 grid gap-x-8 gap-y-6 sm:grid-cols-2">
             {FAQ.map(({ q, a }) => (
               <div key={q}>

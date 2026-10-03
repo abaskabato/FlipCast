@@ -12,11 +12,19 @@
  * Trade-off, stated plainly: WASM encoding is much slower than a native
  * server-side ffmpeg, and long clips can exhaust browser memory. Once the
  * Oracle worker exists, `renderEngine: 'worker'` should take precedence for
- * long clips and for the `smart_face` model.
+ * long clips.
  */
 
 import { loadFFmpegClass, type FFmpegInstance } from './ffmpeg-loader';
 import { filterExpr, outputCanvas, type Focus, type Ratio } from './geometry';
+import { focusTrackFor, type FocusTrack, type SubjectPath } from './tracking';
+import {
+  CAPTION_FONT_FILE,
+  buildAss,
+  buildSrt,
+  type CaptionStyleId,
+  type CaptionWord,
+} from '../captions/captions';
 
 /** Core assets are served from /public (see scripts/sync-ffmpeg-core.mjs). */
 const CORE_BASE = '/ffmpeg';
@@ -42,6 +50,16 @@ export type RenderResult = {
   outputs: RenderedOutput[];
   /** Wall-clock seconds spent rendering. */
   elapsedSeconds: number;
+  /** The transcript, when captions were requested and speech was found. */
+  captions: { words: CaptionWord[]; srt: string } | null;
+  /** Things the user should know, e.g. "no speech found, rendered without captions". */
+  notes: string[];
+};
+
+/** Burned-in captions: the style, and how to turn the clip's audio into words. */
+export type CaptionRequest = {
+  style: CaptionStyleId;
+  transcribe: (pcm: Float32Array, onProgress: (fraction: number, label: string) => void) => Promise<CaptionWord[]>;
 };
 
 export class RenderAbortedError extends Error {
@@ -212,6 +230,9 @@ export async function renderToRatios(
     signal?: AbortSignal;
     focus?: Focus | null;
     source?: SourceInfo | null;
+    /** Subject path from subject-detect.ts; the crop follows it. Needs `source`. */
+    track?: SubjectPath | null;
+    captions?: CaptionRequest | null;
   } = {},
 ): Promise<RenderResult> {
   if (ratios.length === 0) throw new Error('No output formats requested.');
@@ -221,16 +242,26 @@ export async function renderToRatios(
   const startedAt = performance.now();
 
   const srcName = `in-${Date.now()}.${extensionFor(file.name)}`;
-  const plan = planRender(ratios, opts.source);
+  // Captions are drawn into the picture, so a captioned output is never a copy.
+  const plan = planRender(ratios, opts.source, { forceEncode: Boolean(opts.captions) });
   const formats = ratios.length === 1 ? ratios[0] : `${ratios.length} formats`;
+  const notes: string[] = [];
+  let captions: RenderResult['captions'] = null;
+
+  // With captions, transcription takes the first part of the bar.
+  const renderFrom = opts.captions ? 0.45 : 0.05;
 
   // Unsubscribe in `finally` so a reused engine instance does not accumulate
   // listeners across renders. Typed callback is required by ffmpeg's `off()`.
+  // Attached only around the render exec: other execs (audio extraction) must
+  // not move the bar.
   const onProgress = ({ progress }: { progress: number }) => {
     const p = Math.min(1, Math.max(0, progress));
-    opts.onProgress?.({ progress: 0.05 + p * 0.95, label: `Rendering ${formats} · ${Math.round(p * 100)}%` });
+    opts.onProgress?.({
+      progress: renderFrom + p * (1 - renderFrom),
+      label: `Rendering ${formats} · ${Math.round(p * 100)}%`,
+    });
   };
-  ffmpeg.on('progress', onProgress);
 
   // exec() cannot be interrupted, so cancelling mid-render means tearing the
   // worker down. The next render reloads the core (from the HTTP cache).
@@ -242,9 +273,52 @@ export async function renderToRatios(
     opts.onProgress?.({ progress: 0.02, label: 'Reading video into memory…' });
     await ffmpeg.writeFile(srcName, await readFileBytes(file));
     if (opts.signal?.aborted) throw new RenderAbortedError();
-    opts.onProgress?.({ progress: 0.05, label: `Rendering ${formats}…` });
 
-    await ffmpeg.exec(buildArgs(srcName, plan, opts.focus));
+    if (opts.track && opts.source) {
+      for (const item of plan) {
+        if (!item.copy) item.track = focusTrackFor(opts.track, item.ratio, opts.source.width, opts.source.height);
+      }
+    }
+
+    if (opts.captions) {
+      let words: CaptionWord[] | null;
+      try {
+        words = await captionWords(ffmpeg, srcName, opts.captions, (f, label) =>
+          opts.onProgress?.({ progress: 0.05 + f * (renderFrom - 0.05), label }),
+        );
+      } catch (e) {
+        if (opts.signal?.aborted) throw new RenderAbortedError();
+        // Captions are an extra: a failed model download or transcription
+        // must not cost the user the render itself.
+        console.warn('[captions] failed:', e);
+        notes.push(
+          'Captions could not be made this time (the speech model did not load), so the video was rendered without them. Try again in a moment.',
+        );
+        words = [];
+      }
+      if (opts.signal?.aborted) throw new RenderAbortedError();
+      if (words === null) {
+        notes.push('This video has no audio track, so it was rendered without captions.');
+      } else if (words.length === 0) {
+        if (!notes.length) notes.push('No speech was found, so it was rendered without captions.');
+      } else {
+        captions = { words, srt: buildSrt(words) };
+        await installCaptionFont(ffmpeg);
+        for (const [i, item] of plan.entries()) {
+          const name = `cap-${i}.ass`;
+          await ffmpeg.writeFile(name, new TextEncoder().encode(buildAss(words, item.ratio, item.canvas, opts.captions.style)));
+          item.subtitles = name;
+        }
+      }
+    }
+
+    opts.onProgress?.({ progress: renderFrom, label: `Rendering ${formats}…` });
+    ffmpeg.on('progress', onProgress);
+    try {
+      await ffmpeg.exec(buildArgs(srcName, plan, opts.focus));
+    } finally {
+      ffmpeg.off('progress', onProgress);
+    }
     if (opts.signal?.aborted) throw new RenderAbortedError();
 
     for (const item of plan) {
@@ -269,19 +343,60 @@ export async function renderToRatios(
     throw e;
   } finally {
     opts.signal?.removeEventListener('abort', onAbort);
-    try {
-      ffmpeg.off('progress', onProgress);
-    } catch {
-      /* engine already torn down */
-    }
-    try {
-      await ffmpeg.deleteFile(srcName);
-    } catch {
-      /* tab may be unloading */
+    for (const name of [srcName, ...plan.flatMap((p) => (p.subtitles ? [p.subtitles] : []))]) {
+      try {
+        await ffmpeg.deleteFile(name);
+      } catch {
+        /* engine torn down, or tab unloading */
+      }
     }
   }
 
-  return { outputs, elapsedSeconds: (performance.now() - startedAt) / 1000 };
+  return { outputs, elapsedSeconds: (performance.now() - startedAt) / 1000, captions, notes };
+}
+
+const AUDIO_PCM = 'audio.f32';
+
+/**
+ * Pull 16 kHz mono float PCM out of the source and hand it to the transcriber.
+ * Returns null when the source has no audio stream.
+ */
+async function captionWords(
+  ffmpeg: FFmpegInstance,
+  srcName: string,
+  request: CaptionRequest,
+  onProgress: (fraction: number, label: string) => void,
+): Promise<CaptionWord[] | null> {
+  onProgress(0, 'Listening to the audio…');
+  const code = await ffmpeg.exec([
+    '-i', srcName, '-vn', '-map', '0:a:0', '-ac', '1', '-ar', '16000', '-f', 'f32le', AUDIO_PCM,
+  ]);
+  let pcm: Float32Array;
+  try {
+    const bytes = (await ffmpeg.readFile(AUDIO_PCM)) as Uint8Array;
+    if (code !== 0 || bytes.byteLength < 4) return null;
+    // Copy into a fresh, aligned buffer the worker can take ownership of.
+    pcm = new Float32Array(bytes.byteLength >> 2);
+    new Uint8Array(pcm.buffer).set(bytes.subarray(0, pcm.byteLength));
+  } catch {
+    return null;
+  } finally {
+    await ffmpeg.deleteFile(AUDIO_PCM).catch(() => undefined);
+  }
+  return request.transcribe(pcm, onProgress);
+}
+
+const FONTS_DIR = '/fonts';
+let fontInstalled: FFmpegInstance | null = null;
+
+/** Put the caption font where libass looks (subtitles=...:fontsdir=/fonts). */
+async function installCaptionFont(ffmpeg: FFmpegInstance): Promise<void> {
+  if (fontInstalled === ffmpeg) return;
+  const res = await fetch(`/fonts/${CAPTION_FONT_FILE}`);
+  if (!res.ok) throw new Error('Could not load the caption font.');
+  await ffmpeg.createDir(FONTS_DIR).catch(() => undefined);
+  await ffmpeg.writeFile(`${FONTS_DIR}/${CAPTION_FONT_FILE}`, new Uint8Array(await res.arrayBuffer()));
+  fontInstalled = ffmpeg;
 }
 
 type PlannedOutput = {
@@ -290,16 +405,24 @@ type PlannedOutput = {
   /** Stream-copy the source video instead of re-encoding it. */
   copy: boolean;
   outName: string;
+  /** Moving crop that follows the subject; overrides `focus` for this output. */
+  track?: FocusTrack;
+  /** ASS file in the ffmpeg FS to burn in. */
+  subtitles?: string;
 };
 
 /** Decide size and copy-vs-encode per output. Pure, so the UI can show it. */
-export function planRender(ratios: Ratio[], source?: SourceInfo | null): PlannedOutput[] {
+export function planRender(
+  ratios: Ratio[],
+  source?: SourceInfo | null,
+  opts: { forceEncode?: boolean } = {},
+): PlannedOutput[] {
   return ratios.map((ratio, i) => {
     const canvas = outputCanvas(ratio, source?.width, source?.height);
     return {
       ratio,
       canvas,
-      copy: canStreamCopy(source, canvas),
+      copy: !opts.forceEncode && canStreamCopy(source, canvas),
       outName: `out-${i}-${ratio.replace(':', 'x')}.mp4`,
     };
   });
@@ -327,7 +450,15 @@ export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus 
     const branches = encoded.map((_, i) => `[s${i}]`).join('');
     const graph = [
       encoded.length > 1 ? `[0:v]split=${encoded.length}${branches}` : null,
-      ...encoded.map((p, i) => `${encoded.length > 1 ? `[s${i}]` : '[0:v]'}${filterExpr(p.ratio, focus, p.canvas)}[v${i}]`),
+      ...encoded.map(
+        (p, i) =>
+          `${encoded.length > 1 ? `[s${i}]` : '[0:v]'}${filterExpr(
+            p.ratio,
+            p.track ?? focus,
+            p.canvas,
+            p.subtitles ? `subtitles=filename=${p.subtitles}:fontsdir=${FONTS_DIR}` : null,
+          )}[v${i}]`,
+      ),
     ].filter(Boolean);
     args.push('-filter_complex', graph.join(';'));
   }

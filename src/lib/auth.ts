@@ -60,6 +60,24 @@ export const auth = betterAuth({
     max: 60,
   },
   user: {
+    // Accounts are never email-verified (no mail provider yet), so a change
+    // applies immediately. The Stripe customer's email follows on the next
+    // billing portal visit (see /api/billing/portal).
+    changeEmail: {
+      enabled: true,
+      updateEmailWithoutVerification: true,
+    },
+    deleteUser: {
+      enabled: true,
+      // Cancel billing first. If Stripe fails the deletion is refused, so a
+      // subscription can never outlive the account that pays for it. Imported
+      // lazily: billing code is server-only and this file is also loaded by
+      // the Better Auth CLI.
+      beforeDelete: async (user) => {
+        const { closeBillingAccount } = await import('@/lib/billing/sync');
+        await closeBillingAccount(user.id);
+      },
+    },
     additionalFields: {
       subscriptionTier: { type: 'string', defaultValue: 'free', input: false },
       monthlyUsageSeconds: { type: 'number', defaultValue: 0, input: false },

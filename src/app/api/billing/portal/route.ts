@@ -41,10 +41,21 @@ export async function POST(request: Request) {
     );
   }
 
+  // Only same-site paths, so the portal cannot be used as an open redirect.
+  const body = (await request.json().catch(() => ({}))) as { returnPath?: unknown };
+  const returnPath =
+    typeof body.returnPath === 'string' && /^\/[a-z-]*$/.test(body.returnPath) ? body.returnPath : '/';
+
   try {
+    // Receipts go to the customer's email, which can drift after the user
+    // changes theirs on /account. Best effort: never block the portal on it.
+    await client.customers
+      .update(customerId, { email: session.user.email })
+      .catch((e) => console.warn('[billing] customer email sync failed:', e instanceof Error ? e.message : e));
+
     const portal = await client.billingPortal.sessions.create({
       customer: customerId,
-      return_url: `${siteUrl}/`,
+      return_url: `${siteUrl}${returnPath}`,
       // Created by scripts/stripe-setup.mjs. Without it Stripe falls back to
       // the dashboard default, which does not exist until saved by hand.
       ...(process.env.STRIPE_PORTAL_CONFIG_ID?.trim()

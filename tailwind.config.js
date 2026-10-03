@@ -8,6 +8,11 @@ module.exports = {
   ],
   theme: {
     extend: {
+      // Set by next/font in layout.tsx.
+      fontFamily: {
+        sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'var(--font-sans)', 'ui-sans-serif', 'sans-serif'],
+      },
       // shadcn token names, backed by the variables in globals.css, so the
       // auth forms pick up the app's palette instead of rendering unstyled.
       colors: {

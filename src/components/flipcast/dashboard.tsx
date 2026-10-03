@@ -4,26 +4,33 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Upload,
   Video,
-  Layers,
   Sparkles,
   Check,
   CheckCircle2,
   AlertTriangle,
-  ArrowRight,
   Loader2,
   X,
   ShieldCheck,
   HardDrive,
   Clock,
   CreditCard,
+  Crop,
+  ScanFace,
+  Focus as FocusIcon,
+  ArrowRight,
+  RefreshCw,
 } from 'lucide-react';
 import Link from 'next/link';
 
-import { authClient, useSession } from '@/lib/auth-client';
+import { useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
 import FocusPicker from './focus-picker';
 import ShareActions from './share-actions';
 import { renderToRatios, RenderAbortedError, type RenderedOutput } from '@/lib/video/ffmpeg-client';
+import { detectSubject, TrackingUnavailableError } from '@/lib/video/subject-detect';
+import { smoothPath, type SubjectPath } from '@/lib/video/tracking';
+import { CAPTION_STYLES, type CaptionStyleId } from '@/lib/captions/captions';
+import { transcribe } from '@/lib/captions/transcribe';
 import {
   CENTER_FOCUS,
   outputCanvas,
@@ -31,10 +38,20 @@ import {
   type Ratio,
 } from '@/lib/video/geometry';
 import { probeVideo, formatBytes, type VideoMeta } from '@/lib/video/probe';
-import { BROWSER_MAX_INPUT_BYTES, formatDuration, formatQuota } from '@/lib/quotas';
+import {
+  BROWSER_MAX_INPUT_BYTES,
+  MAX_SOURCE_SECONDS,
+  TIER_LIMITS,
+  formatDuration,
+  formatQuota,
+} from '@/lib/quotas';
 import { openBillingPortal, startCheckout } from '@/lib/billing/client';
 import { isBillingPeriod, isPaidTier } from '@/lib/billing/plans';
 import { SiteFooter } from './site-chrome';
+import HeroVisual from './hero-visual';
+import LandingSections from './landing-sections';
+import LiveDemo from './live-demo';
+import { displayName, SiteHeader } from './site-header';
 
 type TargetRatio = Ratio;
 type TrackingMode = 'auto_center' | 'smart_face' | 'manual_crop';
@@ -52,11 +69,62 @@ const RATIO_OPTIONS: { id: TargetRatio; title: string; desc: string; platforms: 
   { id: '16:9', title: '16:9 Landscape', desc: 'Widescreen master', platforms: 'YouTube · X' },
 ];
 
-const MODE_OPTIONS: { id: TrackingMode; title: string; desc: string }[] = [
-  { id: 'auto_center', title: 'Auto Centre', desc: 'Centred crop, no distortion' },
-  { id: 'smart_face', title: 'Smart Face Track', desc: 'Subject-aware reframing' },
-  { id: 'manual_crop', title: 'Manual Crop', desc: 'Choose your own framing' },
+const PLATFORM_PILLS = [
+  { name: 'TikTok', dot: 'bg-cyan-400' },
+  { name: 'Reels', dot: 'bg-pink-500' },
+  { name: 'Shorts', dot: 'bg-red-500' },
+  { name: 'YouTube', dot: 'bg-red-500' },
+  { name: 'LinkedIn', dot: 'bg-sky-500' },
+  { name: 'X', dot: 'bg-zinc-200' },
 ];
+
+/** A tiny preview of each caption style, drawn with CSS to match the ASS output. */
+function CaptionSwatch({ style }: { style: CaptionStyleId }) {
+  const base = 'font-display text-lg font-extrabold uppercase tracking-tight';
+  const outline = { textShadow: '0 0 3px #000, 0 0 3px #000, 2px 2px 0 #000' };
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-12 w-full items-center justify-center rounded-xl bg-gradient-to-br from-zinc-700 to-zinc-900"
+    >
+      {style === 'clean' ? (
+        <span className={`${base} rounded-md bg-black/50 px-2 text-white`}>Flip it</span>
+      ) : (
+        <span className={base} style={outline}>
+          <span className="text-white">Flip </span>
+          <span className={style === 'bold' ? 'text-yellow-300' : 'text-pink-500'}>it</span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+const MODE_OPTIONS: {
+  id: TrackingMode;
+  title: string;
+  desc: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+}[] = [
+  { id: 'smart_face', title: 'Auto-track', desc: 'Finds the speaker in every shot and follows them', icon: ScanFace, badge: 'Best' },
+  { id: 'auto_center', title: 'Centre', desc: 'A steady centred crop, fastest to render', icon: FocusIcon },
+  { id: 'manual_crop', title: 'Manual', desc: 'Drag the frame to choose what stays in shot', icon: Crop },
+];
+
+/** A numbered step heading, so the panels read as one flow from top to bottom. */
+function StepHeading({ n, children, aside }: { n: number; children: React.ReactNode; aside?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="fc-heading flex items-center gap-3">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-pink-400/40 bg-pink-500/10 text-xs font-bold text-pink-300">
+          {n}
+        </span>
+        {children}
+      </h2>
+      {aside}
+    </div>
+  );
+}
 
 const MAX_FILE_BYTES = BROWSER_MAX_INPUT_BYTES;
 
@@ -73,6 +141,9 @@ export default function FlipcastDashboard() {
   const [trackingMode, setTrackingMode] = useState<TrackingMode>('auto_center');
   // Manual crop focal point, as fractions of the frame. Applies to every output.
   const [focus, setFocus] = useState<Focus>(CENTER_FOCUS);
+  const [captionsOn, setCaptionsOn] = useState(false);
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyleId>('bold');
+  const [srt, setSrt] = useState<string | null>(null);
 
   const [usage, setUsage] = useState<Usage | null>(null);
   const [isRendering, setIsRendering] = useState(false);
@@ -277,6 +348,8 @@ export default function FlipcastDashboard() {
     setPhase('Preparing…');
     setError(null);
     setOutputs([]);
+    setSrt(null);
+    setNotice(null);
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -313,21 +386,69 @@ export default function FlipcastDashboard() {
     }
 
     try {
+      const notes: string[] = [];
+
+      // Auto-track: find the subject first, then render with a moving crop.
+      // Takes the first 15% of the bar. Any failure falls back to centred.
+      let track: SubjectPath | null = null;
+      const trackShare = trackingMode === 'smart_face' ? 0.15 : 0;
+      if (trackingMode === 'smart_face') {
+        setPhase('Finding the speaker…');
+        try {
+          const samples = await detectSubject(file, meta.durationSeconds, {
+            signal: controller.signal,
+            onProgress: (f) => {
+              setProgress(f * trackShare);
+              setPhase(`Finding the speaker · ${Math.round(f * 100)}%`);
+            },
+          });
+          track = smoothPath(samples);
+          if (!track) notes.push('No face was found, so the clip was framed from the centre.');
+        } catch (e) {
+          if (controller.signal.aborted) throw new RenderAbortedError();
+          notes.push(
+            e instanceof TrackingUnavailableError
+              ? `${e.message} It was framed from the centre instead.`
+              : 'Auto-track could not run here, so the clip was framed from the centre.',
+          );
+        }
+      }
+
       const result = await renderToRatios(file, targets, {
         signal: controller.signal,
-        // Manual crop is the only mode that moves the window; the others keep
-        // centred framing so this stays undefined for them.
+        // Manual crop moves the window to a fixed point; auto-track moves it
+        // over time; otherwise framing stays centred.
         focus: trackingMode === 'manual_crop' ? focus : null,
+        track,
         // Lets the engine size outputs to the source and copy instead of
         // re-encoding where the output would be identical.
         source: meta,
+        captions: captionsOn
+          ? {
+              style: captionStyle,
+              transcribe: (pcm, report) =>
+                transcribe(pcm, {
+                  signal: controller.signal,
+                  onProgress: (p) =>
+                    p.stage === 'download'
+                      ? report(
+                          p.fraction * 0.4,
+                          `Getting the caption model ready (one time) · ${formatBytes(p.loadedBytes)} of ${formatBytes(p.totalBytes)}`,
+                        )
+                      : report(0.4 + p.fraction * 0.6, `Writing captions · ${Math.round(p.fraction * 100)}%`),
+                }),
+            }
+          : null,
         onProgress: ({ progress: p, label }) => {
-          setProgress(p);
+          setProgress(trackShare + p * (1 - trackShare));
           setPhase(label);
         },
       });
 
       setOutputs(result.outputs);
+      setSrt(result.captions?.srt ?? null);
+      notes.push(...result.notes);
+      if (notes.length) setNotice(notes.join(' '));
       setProgress(1);
       setPhase(
         `Done in ${formatDuration(result.elapsedSeconds)} · rendered locally, nothing uploaded`,
@@ -349,7 +470,7 @@ export default function FlipcastDashboard() {
       }).catch(() => undefined);
       void loadUsage();
     } catch (e) {
-      const aborted = e instanceof RenderAbortedError;
+      const aborted = e instanceof RenderAbortedError || controller.signal.aborted;
       setError(aborted ? 'Render cancelled.' : e instanceof Error ? e.message : 'Render failed.');
       // Report cancellations too: either terminal state refunds the reservation,
       // and an unreported job would otherwise sit in "rendering" forever.
@@ -367,7 +488,20 @@ export default function FlipcastDashboard() {
       setIsRendering(false);
       abortRef.current = null;
     }
-  }, [file, meta, isRendering, signedIn, targets, trackingMode, focus, usage, loadUsage, focusAccount]);
+  }, [
+    file,
+    meta,
+    isRendering,
+    signedIn,
+    targets,
+    trackingMode,
+    focus,
+    captionsOn,
+    captionStyle,
+    usage,
+    loadUsage,
+    focusAccount,
+  ]);
 
   const cancelRender = useCallback(() => {
     abortRef.current?.abort();
@@ -388,6 +522,18 @@ export default function FlipcastDashboard() {
     a.click();
     a.remove();
     // Give the browser a moment to start the download before revoking.
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  };
+
+  const downloadSrt = () => {
+    if (!srt || !file) return;
+    const url = URL.createObjectURL(new Blob([srt], { type: 'application/x-subrip' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${file.name.replace(/\.[^.]+$/, '') || 'captions'}.srt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
 
@@ -413,10 +559,27 @@ export default function FlipcastDashboard() {
     };
   }, [previewUrls]);
 
+  // Preview of the source, shown in the upload card and behind the crop picker.
+  const sourceUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => {
+    return () => {
+      if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+    };
+  }, [sourceUrl]);
+  const [sourcePreviewFailed, setSourcePreviewFailed] = useState(false);
+  useEffect(() => setSourcePreviewFailed(false), [sourceUrl]);
+
+  /** From the landing CTAs: bring the studio into view and open the picker. */
+  const startFromCta = () => {
+    document.getElementById('studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!file) inputRef.current?.click();
+  };
+
   const reset = () => {
     setFile(null);
     setMeta(null);
     setOutputs([]);
+    setSrt(null);
     setProgress(0);
     setPhase('');
     setError(null);
@@ -430,167 +593,204 @@ export default function FlipcastDashboard() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-1 py-2 sm:px-2">
-      {/* Header */}
-      <header className="flex items-center justify-between gap-4">
-        <Link href="/" className="flex items-center gap-2.5" aria-label="Flipcast home">
-          <span className="rounded-xl bg-indigo-600 p-2 text-white shadow-lg shadow-indigo-600/25">
-            <Layers className="h-5 w-5" />
-          </span>
-          <span className="text-lg font-bold tracking-tight text-white">Flipcast</span>
-        </Link>
-
-        <nav className="flex items-center gap-1 sm:gap-2">
-          <Link href="/pricing" className="fc-btn-ghost !text-sm">
-            Pricing
-          </Link>
-          {signedIn ? (
-            <>
-              <span
-                className="hidden max-w-[14rem] truncate px-2 text-sm text-slate-400 md:inline"
-                title={session?.user?.email ?? ''}
-              >
-                {session?.user?.email}
-              </span>
-              <button onClick={() => authClient.signOut()} className="fc-btn-ghost !text-sm">
-                Sign out
-              </button>
-            </>
-          ) : (
-            !sessionPending && (
-              <button onClick={focusAccount} className="fc-btn-secondary !min-h-[36px] !px-3">
-                Sign in
-              </button>
-            )
-          )}
-        </nav>
-      </header>
+      <SiteHeader onSignIn={focusAccount} />
 
       {/* Pitch for first-time visitors. Signed-in users go straight to work. */}
       {!sessionPending && !signedIn && (
-        <section className="grid items-center gap-8 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:py-8">
+        <section className="grid items-center gap-12 pb-4 pt-6 md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:pt-14 lg:gap-16">
           <div>
-            <p className="fc-chip-accent !border-emerald-500/25 !bg-emerald-500/10 !text-emerald-300">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Your footage never leaves your device
+            <p className="fc-chip-accent">
+              <Sparkles className="h-3.5 w-3.5" />
+              Auto-track + captions, free, in your browser
             </p>
-            <h1 className="mt-4 max-w-xl text-4xl font-bold leading-[1.1] tracking-tight text-white sm:text-5xl">
-              One clip in. Every platform out.
+            <h1 className="fc-display mt-5 max-w-xl text-5xl font-extrabold leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-7xl">
+              One clip in.{' '}
+              <span className="fc-gradient-text">Every feed out.</span>
             </h1>
-            <p className="mt-4 max-w-lg text-base leading-relaxed text-slate-400">
-              Turn a horizontal video into vertical, square and widescreen cuts for TikTok,
-              Reels, Shorts and YouTube — rendered right here in your browser. No uploads, no
-              queue.
+            <p className="mt-5 max-w-lg text-base leading-relaxed text-zinc-400 sm:text-lg">
+              Turn a horizontal video into captioned vertical, square and widescreen cuts that
+              keep the speaker in frame. Ready for TikTok, Reels, Shorts and YouTube in one pass.
             </p>
-            <ol className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-300">
-              {['Drop a video', 'Pick formats & framing', 'Download'].map((step, i) => (
-                <li key={step} className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-indigo-300">
-                    {i + 1}
-                  </span>
-                  {step}
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <button
+                onClick={startFromCta}
+                className="fc-btn-primary !min-h-[56px] !px-8 !text-base"
+              >
+                <Upload className="h-5 w-5" />
+                Upload a video — it’s free
+              </button>
+              <Link href="/pricing" className="fc-btn-ghost !min-h-[44px] justify-center !text-sm">
+                See pricing
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+            <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-zinc-400">
+              {[
+                'No watermark',
+                'No upload',
+                `${formatQuota(TIER_LIMITS.free)} free a month`,
+                'No card needed',
+              ].map((f) => (
+                <li key={f} className="flex items-center gap-1.5">
+                  <Check className="h-4 w-4 shrink-0 text-emerald-400" />
+                  {f}
                 </li>
               ))}
-            </ol>
+            </ul>
+            <div className="mt-8 flex flex-wrap items-center gap-2">
+              <span className="fc-meta mr-1">Made for</span>
+              {PLATFORM_PILLS.map((p) => (
+                <span
+                  key={p.name}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-semibold text-zinc-300"
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${p.dot}`} />
+                  {p.name}
+                </span>
+              ))}
+            </div>
           </div>
 
-          {/* The three output shapes, to scale, so the product reads at a glance. */}
-          <div aria-hidden="true" className="hidden items-end gap-3 md:flex">
-            {[
-              { label: '9:16', w: 72, h: 128 },
-              { label: '1:1', w: 104, h: 104 },
-              { label: '16:9', w: 168, h: 94.5 },
-            ].map((f) => (
-              <div key={f.label} className="flex flex-col items-center gap-2">
-                <div
-                  className="rounded-lg border border-indigo-400/40 bg-gradient-to-br from-indigo-500/25 via-slate-900 to-slate-900 shadow-lg shadow-indigo-500/10"
-                  style={{ width: f.w, height: f.h }}
-                />
-                <span className="font-mono text-xs text-slate-500">{f.label}</span>
-              </div>
-            ))}
-          </div>
+          <HeroVisual />
         </section>
       )}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      {signedIn && session?.user && (
+        <div>
+          <h1 className="fc-display text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
+            Hey {displayName(session.user).split(' ')[0]} 👋
+          </h1>
+          <p className="fc-body mt-1">Drop a video and get every format ready to post.</p>
+        </div>
+      )}
+
+      {!sessionPending && !signedIn && <LiveDemo onStart={startFromCta} />}
+
+      {!sessionPending && !signedIn && (
+        <div className="pt-10 text-center">
+          <h2 className="fc-display text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
+            Try it right here
+          </h2>
+          <p className="fc-body mt-2">
+            Load a clip and set it up now. You’ll only need a free account to render.
+          </p>
+        </div>
+      )}
+
+      <div id="studio" className="grid scroll-mt-6 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
         {/* Work column: the render pipeline, in order. */}
-        <div className="space-y-6">
+        <div className="space-y-5">
       {/* Upload */}
-      <div
-        onDragEnter={(e) => {
-          e.preventDefault();
-          setDragActive(true);
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={(e) => {
-          // preventDefault lives on DragEvent; stopPropagation does not.
-          e.preventDefault();
-          setDragActive(false);
-        }}
-        onDrop={onDrop}
-        onClick={() => !isRendering && inputRef.current?.click()}
-        className={`relative cursor-pointer rounded-2xl border-2 border-dashed p-10 text-center transition-all duration-200 ${
-          dragActive
-            ? 'border-indigo-500 bg-indigo-500/5'
-            : 'border-slate-700 bg-slate-900/50 hover:border-slate-600 hover:bg-slate-900'
-        } ${isRendering ? 'pointer-events-none opacity-60' : ''}`}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/*"
-          className="hidden"
-          onChange={(e) => void acceptFile(e.target.files?.[0] ?? null)}
-        />
-        {file && meta ? (
-          <div className="flex flex-col items-center gap-3">
-            <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 p-3">
-              <Video className="h-6 w-6 text-emerald-400" />
+      <input
+        ref={inputRef}
+        type="file"
+        accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/*"
+        className="hidden"
+        onChange={(e) => void acceptFile(e.target.files?.[0] ?? null)}
+      />
+      {file && meta ? (
+        <div className="fc-card p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="relative flex aspect-video w-full shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-black ring-1 ring-white/10 sm:w-64">
+              {sourceUrl && !sourcePreviewFailed ? (
+                <video
+                  src={`${sourceUrl}#t=1`}
+                  muted
+                  playsInline
+                  controls
+                  preload="metadata"
+                  onError={() => setSourcePreviewFailed(true)}
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <Video className="h-8 w-8 text-zinc-600" />
+              )}
             </div>
-            <p className="max-w-full truncate text-sm font-semibold text-white">{file.name}</p>
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <span className="fc-chip font-mono !text-emerald-300">
-                {meta.width}×{meta.height}
-              </span>
-              <span className="fc-chip">
-                <Clock className="h-3.5 w-3.5" />
-                {formatDuration(meta.durationSeconds)}
-              </span>
-              <span className="fc-chip">
-                <HardDrive className="h-3.5 w-3.5" />
-                {formatBytes(file.size)}
-              </span>
+            <div className="min-w-0 flex-1 space-y-3">
+              <div>
+                <p className="fc-meta flex items-center gap-1.5 !text-emerald-400">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Loaded on this device
+                </p>
+                <p className="mt-1 truncate text-base font-semibold text-white" title={file.name}>
+                  {file.name}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="fc-chip font-mono">
+                  {meta.width}×{meta.height}
+                </span>
+                <span className="fc-chip">
+                  <Clock className="h-3.5 w-3.5" />
+                  {formatDuration(meta.durationSeconds)}
+                </span>
+                <span className="fc-chip">
+                  <HardDrive className="h-3.5 w-3.5" />
+                  {formatBytes(file.size)}
+                </span>
+              </div>
+              {!isRendering && (
+                <button
+                  onClick={() => {
+                    reset();
+                    inputRef.current?.click();
+                  }}
+                  className="fc-btn-ghost -ml-3"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Replace video
+                </button>
+              )}
             </div>
-            {!isRendering && outputs.length === 0 && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  reset();
-                }}
-                className="fc-btn-ghost"
-              >
-                <X className="h-3.5 w-3.5" />
-                Choose a different file
-              </button>
-            )}
           </div>
-        ) : (
+        </div>
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="Choose a video to flip"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              inputRef.current?.click();
+            }
+          }}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            setDragActive(true);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={(e) => {
+            // preventDefault lives on DragEvent; stopPropagation does not.
+            e.preventDefault();
+            setDragActive(false);
+          }}
+          onDrop={onDrop}
+          onClick={() => !isRendering && inputRef.current?.click()}
+          className={`relative cursor-pointer rounded-3xl border-2 border-dashed px-6 py-12 text-center transition-all duration-200 sm:py-14 ${
+            dragActive
+              ? 'scale-[1.01] border-pink-400 bg-pink-500/[0.07]'
+              : 'border-white/[0.12] bg-white/[0.02] hover:border-pink-400/50 hover:bg-white/[0.04]'
+          } ${isRendering ? 'pointer-events-none opacity-60' : ''}`}
+        >
           <div className="flex flex-col items-center gap-3">
-            <div className="rounded-full bg-slate-800 p-3.5">
-              <Upload className="h-6 w-6 text-slate-400" />
+            <div className="fc-gradient rounded-2xl p-4 shadow-lg shadow-pink-500/30">
+              <Upload className="h-6 w-6 text-white" />
             </div>
-            <p className="text-base font-medium text-slate-200">
-              Drop a horizontal master, or click to browse
+            <p className="fc-display text-xl font-bold text-white sm:text-2xl">
+              {dragActive ? 'Drop it' : 'Drop your video here'}
             </p>
-            <p className="fc-meta">
-              MP4, MOV, WebM or MKV up to {formatBytes(MAX_FILE_BYTES)}
+            <p className="fc-body">
+              or <span className="font-semibold text-pink-400">browse your files</span>. It stays
+              on your device.
             </p>
+            <p className="fc-meta">MP4, MOV, WebM or MKV · up to {formatBytes(MAX_FILE_BYTES)}</p>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {error && (
         <div className="fc-notice-error" role="alert">
@@ -607,47 +807,58 @@ export default function FlipcastDashboard() {
       )}
 
       {/* Engine params */}
-      <section className="grid gap-6 xl:grid-cols-2">
-        <div className="fc-card space-y-3 p-5">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="fc-heading">Output formats</h2>
-            <span className="fc-chip-accent shrink-0">
-              {targets.length} selected
-            </span>
-          </div>
-          <p className="fc-body">
-            Pick any combination. Each format is rendered from the same source.
-          </p>
-          <div className="grid gap-2">
+      <section className="space-y-5">
+        <div className="fc-card space-y-4 p-5 sm:p-6">
+          <StepHeading
+            n={1}
+            aside={
+              <span className="fc-chip-accent shrink-0">
+                {targets.length} selected
+              </span>
+            }
+          >
+            Formats
+          </StepHeading>
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
             {RATIO_OPTIONS.map((ratio) => {
               const active = targets.includes(ratio.id);
               const canvas = outputCanvas(ratio.id, meta?.width, meta?.height);
+              const [rw, rh] = ratio.id.split(':').map(Number);
               return (
                 <button
                   key={ratio.id}
                   onClick={() => toggleTarget(ratio.id)}
                   disabled={isRendering}
                   aria-pressed={active}
-                  className={`flex min-h-[56px] items-center justify-between gap-3 rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
+                  className={`group relative flex flex-col items-center gap-2 rounded-2xl border px-2 py-4 text-center transition-all disabled:opacity-50 sm:gap-3 sm:p-4 ${
                     active
-                      ? 'border-indigo-500 bg-indigo-500/5 ring-1 ring-indigo-500'
-                      : 'border-slate-800 bg-slate-950 hover:border-slate-700 hover:bg-slate-900'
+                      ? 'border-pink-400/70 bg-pink-500/[0.08] shadow-lg shadow-pink-500/10'
+                      : 'border-white/[0.07] bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <span
+                    className={`absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full border sm:right-3 sm:top-3 ${
+                      active ? 'fc-gradient border-transparent' : 'border-white/20'
+                    }`}
+                  >
+                    {active && <Check className="h-3 w-3 text-white" />}
+                  </span>
+                  <span className="flex h-14 items-center justify-center sm:h-20">
                     <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
-                        active ? 'border-indigo-400 bg-indigo-500' : 'border-slate-600'
+                      className={`rounded-md border-2 transition-colors sm:rounded-lg ${
+                        active ? 'fc-gradient border-transparent' : 'border-white/25 bg-white/[0.04]'
                       }`}
-                    >
-                      {active && <Check className="h-3 w-3 text-white" />}
+                      style={{ width: (48 * rw) / Math.max(rw, rh), height: (48 * rh) / Math.max(rw, rh) }}
+                    />
+                  </span>
+                  <span>
+                    <span className="block text-sm font-bold text-white">
+                      <span className="sm:hidden">{ratio.id}</span>
+                      <span className="hidden sm:inline">{ratio.title}</span>
                     </span>
-                    <div>
-                      <p className="text-sm font-semibold text-white">{ratio.title}</p>
-                      <p className="fc-meta">{ratio.platforms}</p>
-                    </div>
-                  </div>
-                  <span className="fc-chip shrink-0 font-mono">
+                    <span className="fc-meta block !text-[11px] sm:!text-xs">{ratio.platforms}</span>
+                  </span>
+                  <span className="fc-chip hidden font-mono sm:inline-flex">
                     {canvas.w}×{canvas.h}
                   </span>
                 </button>
@@ -656,59 +867,123 @@ export default function FlipcastDashboard() {
           </div>
         </div>
 
-        <div className="fc-card space-y-3 p-5">
-          <h2 className="fc-heading">Reframing mode</h2>
-          <div className="grid gap-2">
-            {MODE_OPTIONS.map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => setTrackingMode(mode.id)}
-                disabled={isRendering}
-                aria-pressed={trackingMode === mode.id}
-                className={`min-h-[56px] rounded-xl border p-3 text-left transition-all disabled:opacity-50 ${
-                  trackingMode === mode.id
-                    ? 'border-indigo-500 bg-indigo-500/5 ring-1 ring-indigo-500'
-                    : 'border-slate-800 bg-slate-950 hover:border-slate-700 hover:bg-slate-900'
-                }`}
-              >
-                <p className="flex items-center gap-2 text-sm font-semibold text-white">
-                  {mode.id === 'smart_face' && <Sparkles className="h-3.5 w-3.5 text-indigo-400" />}
-                  {mode.title}
-                </p>
-                <p className="fc-body mt-0.5">{mode.desc}</p>
-                {mode.id === 'smart_face' && (
-                  <p className="fc-meta mt-1.5 text-amber-300/90">
-                    Subject tracking is in preview — currently renders centred.
-                  </p>
-                )}
-                {mode.id === 'manual_crop' && (
-                  <p className="fc-meta mt-1.5 text-emerald-300/90">
-                    Click or drag the frame below to choose what stays in shot.
-                  </p>
-                )}
-              </button>
-            ))}
+        <div className="fc-card space-y-4 p-5 sm:p-6">
+          <StepHeading n={2}>Framing</StepHeading>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {MODE_OPTIONS.map((mode) => {
+              const active = trackingMode === mode.id;
+              return (
+                <button
+                  key={mode.id}
+                  onClick={() => setTrackingMode(mode.id)}
+                  disabled={isRendering}
+                  aria-pressed={active}
+                  className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition-all disabled:opacity-50 ${
+                    active
+                      ? 'border-pink-400/70 bg-pink-500/[0.08]'
+                      : 'border-white/[0.07] bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <span
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                      active ? 'fc-gradient text-white' : 'bg-white/[0.06] text-zinc-400'
+                    }`}
+                  >
+                    <mode.icon className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2 text-sm font-semibold text-white">
+                      {mode.title}
+                      {mode.badge && (
+                        <span className="rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+                          {mode.badge}
+                        </span>
+                      )}
+                    </span>
+                    <span className="fc-meta mt-0.5 block !text-zinc-400">{mode.desc}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
-          {trackingMode === 'manual_crop' && file && (
-            <FocusPicker
-              focus={focus}
-              onChange={setFocus}
+          {trackingMode === 'manual_crop' &&
+            (file ? (
+              <FocusPicker
+                focus={focus}
+                onChange={setFocus}
+                disabled={isRendering}
+                sourceWidth={meta?.width ?? null}
+                sourceHeight={meta?.height ?? null}
+                ratios={targets}
+                previewSrc={sourcePreviewFailed ? null : sourceUrl}
+              />
+            ) : (
+              <p className="fc-meta">Load a video to choose the framing on the real frame.</p>
+            ))}
+        </div>
+
+        <div className="fc-card space-y-4 p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <StepHeading n={3}>
+                Captions
+                <span className="fc-chip-accent !py-0.5">Free</span>
+              </StepHeading>
+              <p className="fc-body mt-2">
+                Word-by-word captions burned into every format, plus an .srt file. Transcribed on
+                your device; the speech model downloads once (about 77 MB).
+              </p>
+            </div>
+            <button
+              role="switch"
+              aria-checked={captionsOn}
+              aria-label="Auto captions"
+              onClick={() => setCaptionsOn((v) => !v)}
               disabled={isRendering}
-              sourceWidth={meta?.width ?? null}
-              sourceHeight={meta?.height ?? null}
-              ratios={targets}
-            />
+              className={`relative mt-1 h-8 w-14 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                captionsOn ? 'fc-gradient' : 'bg-white/[0.12]'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition-all ${
+                  captionsOn ? 'left-7' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {captionsOn && (
+            <div className="grid grid-cols-3 gap-2">
+              {CAPTION_STYLES.map((st) => (
+                <button
+                  key={st.id}
+                  onClick={() => setCaptionStyle(st.id)}
+                  disabled={isRendering}
+                  aria-pressed={captionStyle === st.id}
+                  title={st.desc}
+                  className={`flex flex-col items-center gap-2 rounded-2xl border p-2 text-center transition-all disabled:opacity-50 sm:p-3 ${
+                    captionStyle === st.id
+                      ? 'border-pink-400/70 bg-pink-500/[0.08]'
+                      : 'border-white/[0.07] bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <CaptionSwatch style={st.id} />
+                  <span className="text-sm font-semibold text-white">{st.name}</span>
+                  <span className="fc-meta hidden sm:block">{st.desc}</span>
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </section>
 
       {/* Action */}
       {isRendering ? (
-        <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+        <div className="fc-card space-y-3 p-5">
           <div className="flex items-center justify-between text-sm">
-            <span className="flex items-center gap-2 font-medium text-slate-200">
-              <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
+            <span className="flex items-center gap-2 font-medium text-zinc-200">
+              <Loader2 className="h-4 w-4 animate-spin text-pink-400" />
               {phase || 'Rendering…'}
             </span>
             <button
@@ -719,7 +994,7 @@ export default function FlipcastDashboard() {
             </button>
           </div>
           <div
-            className="h-2 w-full overflow-hidden rounded-full bg-slate-800"
+            className="h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]"
             role="progressbar"
             aria-valuenow={Math.round(progress * 100)}
             aria-valuemin={0}
@@ -727,7 +1002,7 @@ export default function FlipcastDashboard() {
             aria-label="Render progress"
           >
             <div
-              className="h-full rounded-full bg-indigo-500 transition-all duration-200"
+              className="fc-gradient h-full rounded-full transition-all duration-200"
               style={{ width: `${Math.round(progress * 100)}%` }}
             />
           </div>
@@ -740,25 +1015,39 @@ export default function FlipcastDashboard() {
         <button
           onClick={startRender}
           disabled={signedIn && (!file || !meta || targets.length === 0)}
-          className="group flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-all hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none"
+          className="fc-gradient fc-display group flex min-h-[56px] w-full items-center justify-center gap-2 rounded-full text-base font-bold text-white shadow-xl shadow-pink-500/25 transition-all hover:brightness-110 active:scale-[0.99] disabled:bg-none disabled:bg-white/[0.06] disabled:text-zinc-600 disabled:shadow-none"
         >
-          {signedIn ? 'Render on this device' : 'Sign in to render'}
-          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          <Sparkles className="h-4 w-4" />
+          {signedIn
+            ? targets.length > 1
+              ? `Flip it into ${targets.length} formats`
+              : 'Flip it'
+            : 'Sign in to flip'}
         </button>
       )}
 
       {/* Outputs */}
       {outputs.length > 0 && (
-        <section className="fc-card space-y-4 !border-emerald-500/25 p-5">
+        <section className="fc-card space-y-5 p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-base font-semibold text-emerald-300">
-              <CheckCircle2 className="h-4 w-4" />
-              {outputs.length} {outputs.length === 1 ? 'format' : 'formats'} ready
-            </h2>
+            <div>
+              <h2 className="fc-display flex items-center gap-2 text-2xl font-extrabold text-white">
+                <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                Ready to post 🎉
+              </h2>
+              <p className="fc-meta mt-0.5">
+                {outputs.length} {outputs.length === 1 ? 'format' : 'formats'} rendered on your device
+              </p>
+            </div>
             <div className="flex gap-2">
-              <button onClick={downloadAll} className="fc-btn !bg-emerald-600 hover:!bg-emerald-500">
+              <button onClick={downloadAll} className="fc-btn-primary">
                 Download all
               </button>
+              {srt && (
+                <button onClick={downloadSrt} className="fc-btn-secondary">
+                  Captions .srt
+                </button>
+              )}
               <button onClick={reset} className="fc-btn-secondary">
                 Start over
               </button>
@@ -769,17 +1058,23 @@ export default function FlipcastDashboard() {
             {outputs.map((o) => (
               <div
                 key={o.ratio}
-                className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4"
+                className="flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4"
               >
-                <video
-                  src={previewUrls.get(o.ratio)}
-                  className="aspect-square w-full rounded-lg bg-black object-contain"
-                  controls
-                  playsInline
-                />
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-white">{o.ratio} · {o.width}×{o.height}</p>
-                  <p className="fc-meta">{formatBytes(o.sizeBytes)}</p>
+                {/* Shown at the clip's real shape, framed like the screen it is for. */}
+                <div className="flex h-72 items-center justify-center rounded-xl bg-black/40 p-3">
+                  <video
+                    src={previewUrls.get(o.ratio)}
+                    className="max-h-full max-w-full rounded-[14px] bg-black shadow-xl shadow-black/50 ring-1 ring-white/10"
+                    style={{ aspectRatio: `${o.width} / ${o.height}` }}
+                    controls
+                    playsInline
+                  />
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="fc-display text-base font-bold text-white">{o.ratio}</p>
+                  <p className="fc-meta">
+                    {o.width}×{o.height} · {formatBytes(o.sizeBytes)}
+                  </p>
                 </div>
                 <ShareActions output={o} onDownload={downloadOutput} />
               </div>
@@ -815,7 +1110,7 @@ export default function FlipcastDashboard() {
                   <span className="fc-meta">of {formatQuota(usage.limitSeconds)}</span>
                 </div>
                 <div
-                  className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-800"
+                  className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]"
                   role="progressbar"
                   aria-valuenow={Math.round(usagePercent)}
                   aria-valuemin={0}
@@ -824,7 +1119,7 @@ export default function FlipcastDashboard() {
                 >
                   <div
                     className={`h-full rounded-full transition-all duration-300 ${
-                      usagePercent >= 90 ? 'bg-amber-400' : 'bg-indigo-500'
+                      usagePercent >= 90 ? 'bg-amber-400' : 'fc-gradient'
                     }`}
                     style={{ width: `${usagePercent}%` }}
                   />
@@ -835,10 +1130,12 @@ export default function FlipcastDashboard() {
               </div>
 
               {usage.tier === 'free' ? (
-                <div className="space-y-2 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] p-4">
-                  <p className="text-sm font-semibold text-white">Need more minutes?</p>
+                <div className="space-y-2 rounded-2xl border border-pink-500/25 bg-gradient-to-br from-pink-500/[0.12] via-fuchsia-500/[0.06] to-orange-400/[0.08] p-4">
+                  <p className="fc-display text-base font-bold text-white">Posting more often?</p>
                   <p className="fc-body">
-                    Creator gives you an hour a month and clips up to 15 minutes.
+                    Creator gives you {formatQuota(TIER_LIMITS.creator)} a month and clips up to{' '}
+                    {MAX_SOURCE_SECONDS.creator / 60} minutes, for less than most cloud tools
+                    charge for an hour.
                   </p>
                   <Link href="/pricing" className="fc-btn-primary mt-1 w-full">
                     See plans
@@ -861,13 +1158,15 @@ export default function FlipcastDashboard() {
             </div>
           )}
 
-          <p className="flex items-start gap-2 px-1 text-xs leading-relaxed text-slate-500">
+          <p className="flex items-start gap-2 px-1 text-xs leading-relaxed text-zinc-500">
             <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400/80" />
             Videos are encoded in this tab. Only the file name, duration and format reach our
             server.
           </p>
         </aside>
       </div>
+
+      {!sessionPending && !signedIn && <LandingSections onStart={startFromCta} />}
 
       <SiteFooter />
     </div>

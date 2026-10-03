@@ -118,7 +118,52 @@ async function main() {
   }
 
   console.log('ffmpeg core assets ready');
+
+  // Subject tracking and captions run their own WASM runtimes. Served from our
+  // origin for the same reasons as the ffmpeg core: COEP, no CDN in the
+  // critical path, and no user IP sent to a third party.
+  for (const { from, to, files } of ML_RUNTIMES) {
+    const src = path.join(root, 'node_modules', from);
+    if (!existsSync(src)) {
+      console.warn(`- ${from} not installed, skipping (optional)`);
+      continue;
+    }
+    const dest = path.join(root, 'public', to);
+    await mkdir(dest, { recursive: true });
+    for (const f of files) {
+      await cp(path.join(src, f), path.join(dest, f));
+      const s = await stat(path.join(dest, f));
+      console.log(`+ public/${to}/${f} (${(s.size / 1024 / 1024).toFixed(1)} MB)`);
+    }
+  }
 }
+
+/**
+ * MediaPipe vision (face detection, src/lib/video/subject-detect.ts) and the
+ * ONNX runtime transformers.js uses for Whisper (src/lib/captions/). Only the
+ * variants the app selects are copied: SIMD and non-SIMD MediaPipe, and the
+ * plain SIMD+threads ONNX build (transcribe.worker.ts pins it).
+ */
+const ML_RUNTIMES = [
+  {
+    from: '@mediapipe/tasks-vision/wasm',
+    to: 'mediapipe',
+    files: [
+      'vision_wasm_internal.js',
+      'vision_wasm_internal.wasm',
+      'vision_wasm_nosimd_internal.js',
+      'vision_wasm_nosimd_internal.wasm',
+    ],
+  },
+  {
+    from: 'onnxruntime-web/dist',
+    to: 'ort',
+    files: [
+      'ort-wasm-simd-threaded.mjs',
+      'ort-wasm-simd-threaded.wasm',
+    ],
+  },
+];
 
 main().catch((e) => {
   console.error(e);

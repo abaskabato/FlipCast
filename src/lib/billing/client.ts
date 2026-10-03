@@ -22,10 +22,13 @@ async function postForUrl(path: string, body?: unknown): Promise<{ status: numbe
   return { status: res.status, ...data };
 }
 
-/** Open the Stripe customer portal for the signed-in user. */
-export async function openBillingPortal(): Promise<BillingOutcome> {
+/**
+ * Open the Stripe customer portal for the signed-in user. `returnPath` is the
+ * page Stripe's "Return" link comes back to.
+ */
+export async function openBillingPortal(returnPath = '/'): Promise<BillingOutcome> {
   try {
-    const r = await postForUrl('/api/billing/portal');
+    const r = await postForUrl('/api/billing/portal', { returnPath });
     if (r.url) {
       window.location.href = r.url;
       return { kind: 'redirected' };

@@ -132,10 +132,10 @@ export default function ShareActions({
             <button
               key={p.name}
               onClick={() => postTo(p)}
-              className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 text-xs font-semibold text-slate-200 transition-colors hover:border-slate-600 hover:bg-slate-800"
+              className="inline-flex min-h-[36px] items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition-colors hover:border-pink-400/40 hover:bg-pink-500/10"
             >
               {p.name}
-              <ExternalLink className="h-3 w-3 text-slate-500" />
+              <ExternalLink className="h-3 w-3 text-zinc-500" />
             </button>
           ))}
         </div>

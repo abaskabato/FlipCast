@@ -26,6 +26,8 @@ type Props = {
   sourceHeight: number | null;
   /** Output ratios the user selected, so we can overlay each crop window. */
   ratios: readonly string[];
+  /** Object URL of the source, drawn behind the overlay so framing is not done blind. */
+  previewSrc?: string | null;
 };
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
@@ -37,6 +39,7 @@ export default function FocusPicker({
   sourceWidth,
   sourceHeight,
   ratios,
+  previewSrc,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -162,8 +165,8 @@ export default function FocusPicker({
   return (
     <div className="fc-card-inset mt-3 space-y-2 p-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-200">
-          <Crosshair className="h-3.5 w-3.5 text-indigo-400" />
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
+          <Crosshair className="h-3.5 w-3.5 text-pink-400" />
           Focal point
         </p>
         <button
@@ -187,15 +190,46 @@ export default function FocusPicker({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onKeyDown={handleKeyDown}
-        className={`relative aspect-video w-full touch-none select-none overflow-hidden rounded-lg border border-slate-700 bg-slate-900 ${
+        className={`relative mx-auto max-h-[420px] w-full touch-none select-none overflow-hidden rounded-xl border border-white/10 bg-black ${
           disabled ? 'cursor-not-allowed opacity-60' : dragging ? 'cursor-grabbing' : 'cursor-crosshair'
         }`}
+        style={{
+          aspectRatio: sourceWidth && sourceHeight ? `${sourceWidth} / ${sourceHeight}` : '16 / 9',
+          maxWidth:
+            sourceWidth && sourceHeight ? `calc(420px * ${sourceWidth / sourceHeight})` : undefined,
+        }}
       >
+        {/* The real frame, a second in so it is rarely a black fade-in. */}
+        {previewSrc && (
+          <video
+            src={`${previewSrc}#t=1`}
+            muted
+            playsInline
+            preload="metadata"
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full object-fill"
+          />
+        )}
+
+        {/* Dim what gets cropped away: one shadow per window, union shows through. */}
+        {overlays.length === 1 && (
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              left: `${overlays[0].left}%`,
+              top: `${overlays[0].top}%`,
+              width: `${overlays[0].width}%`,
+              height: `${overlays[0].height}%`,
+              boxShadow: '0 0 0 9999px rgb(0 0 0 / 0.55)',
+            }}
+          />
+        )}
+
         {/* Crop windows: the area that survives into each output. */}
         {overlays.map((o, i) => (
           <div
             key={o.ratio}
-            className="pointer-events-none absolute border-2 border-dashed border-indigo-400/60"
+            className="pointer-events-none absolute border-2 border-dashed border-pink-400/70"
             style={{
               left: `${o.left}%`,
               top: `${o.top}%`,
@@ -204,7 +238,7 @@ export default function FocusPicker({
               zIndex: 1,
             }}
           >
-            <span className="absolute -top-0.5 left-1 rounded bg-slate-950/80 px-1 text-[10px] font-semibold text-indigo-300">
+            <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-pink-300">
               {o.ratio}
               {overlays.length > 1 ? ` ${i + 1}` : ''}
             </span>
@@ -216,12 +250,12 @@ export default function FocusPicker({
           className="pointer-events-none absolute h-6 w-6 -translate-x-1/2 -translate-y-1/2"
           style={{ left: `${focus.x * 100}%`, top: `${focus.y * 100}%`, zIndex: 2 }}
         >
-          <span className="absolute inset-0 rounded-full border-2 border-emerald-400" />
+          <span className="absolute inset-0 rounded-full border-2 border-emerald-400 shadow-[0_0_0_2px_rgb(0_0_0/0.5)]" />
           <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400" />
         </div>
 
         {!sourceWidth && (
-          <p className="absolute inset-0 flex items-center justify-center p-3 text-center text-xs text-slate-500">
+          <p className="absolute inset-0 flex items-center justify-center p-3 text-center text-xs text-zinc-500">
             Frame dimensions unavailable — you can still set a focal point.
           </p>
         )}
@@ -229,7 +263,7 @@ export default function FocusPicker({
 
       <p className="fc-meta">
         {isCentred
-          ? 'Centred — same as Auto Centre.'
+          ? 'Centred — same as the Centre option.'
           : `Kept at ${Math.round(focus.x * 100)}% across, ${Math.round(focus.y * 100)}% down. Applies to every format.`}
       </p>
     </div>

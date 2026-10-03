@@ -67,7 +67,7 @@ export function AuthPanel({ onSignedIn }: { onSignedIn?: () => void }) {
 
         {/* The mode switch sits under the form, where people look for it,
             instead of competing with the heading for width. */}
-        <p className="mt-4 border-t border-slate-800 pt-4 text-center text-sm text-slate-400">
+        <p className="mt-4 border-t border-white/[0.06] pt-4 text-center text-sm text-zinc-400">
           {mode === 'signup' ? 'Already have an account?' : 'New to Flipcast?'}{' '}
           <button
             type="button"

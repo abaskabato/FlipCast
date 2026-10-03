@@ -39,8 +39,8 @@ render → quota debit against Postgres.
    returns a 503 and the upgrade button explains why. Free tier is fully
    enforced throughout, so nothing is lost while billing is off. The webhook is
    the only writer of `subscription_tier` — the client cannot set it.
-2. **`smart_face` renders centred.** No face-detection model; labelled as preview
-   in the UI rather than silently faking it.
+2. ~~**`smart_face` renders centred.**~~ Shipped as Auto-track: MediaPipe face
+   detection on the device, smoothed into a moving crop (see 3b).
 3. **No history playback.** Past jobs list their metadata, but output bytes were
    never stored, so old formats can only be re-rendered.
 4. **Speed.** ~8x realtime on a 3 s clip. Mitigated with the MT core and honest
@@ -75,6 +75,34 @@ render → quota debit against Postgres.
   request header) and `POST /api/billing/webhook` (raw-body signature
   verification, the sole writer of `subscription_tier`).
 - **`/pricing` page.** Static, so it cannot fail on a cold serverless start.
+
+## 3b. Competitive pass (2026-10-02)
+
+Benchmarked against Opus Clip, Kapwing, VEED and CapCut. Closed the gaps that
+fit the on-device model:
+
+- **Allowances.** Free 60 min/mo (clips up to 10 min), Creator 5 h (30 min),
+  Agency 25 h (60 min). Rendering is on the user's device, so minutes cost us
+  almost nothing; Creator is about 4 cents a minute against Opus Clip's 10.
+- **Auto-track.** `subject-detect.ts` samples frames through a `<video>`
+  element and MediaPipe BlazeFace (whole frame plus three overlapping tiles,
+  so small faces in wide shots are found). `tracking.ts` rejects false
+  detections, bridges gaps, smooths with a zero-phase filter, simplifies with
+  RDP and emits a flat piecewise-linear crop expression evaluated per frame.
+  Verified by `verify:track` (a moving subject stays centred to the pixel).
+- **Auto captions.** Audio is extracted with ffmpeg, transcribed in a worker
+  with Whisper base (word timestamps, transformers.js, ~77 MB model cached
+  after first use), grouped into short lines per shape and burned in with
+  libass in three styles; an .srt is offered too. Verified by
+  `verify:captions` against a real libass.
+
+Not done, deliberately: AI clip selection and scheduled posting. Both need
+server-side AI or platform API approvals (TikTok/Meta app review), and the
+first would break "your footage never leaves your device".
+
+Known limits: captions use Anton, which has no CJK/Arabic glyphs, so those
+languages render as boxes; Auto-track needs a format the browser can decode
+(falls back to centre otherwise); transcription speed depends on the device.
 
 ## 4. Oracle VM (deferred, not required)
 

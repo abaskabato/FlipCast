@@ -33,6 +33,7 @@ export type FFmpegInstance = {
   writeFile(path: string, data: Uint8Array): Promise<boolean>;
   readFile(path: string, encoding?: string): Promise<Uint8Array | string>;
   deleteFile(path: string): Promise<boolean>;
+  createDir(path: string): Promise<boolean>;
   terminate(): void;
   on(event: 'log', cb: (data: FFmpegLogEvent) => void): void;
   on(event: 'progress', cb: (data: FFmpegProgressEvent) => void): void;

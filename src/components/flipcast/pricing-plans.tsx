@@ -30,17 +30,19 @@ const PLANS: Plan[] = [
     highlights: [
       `${formatQuota(TIER_LIMITS.free)} of source video a month`,
       `Clips up to ${MAX_SOURCE_SECONDS.free / 60} minutes`,
-      'All three formats, manual framing',
+      'Auto-track and word-by-word auto captions',
+      'All three formats, no watermark',
       'No card required',
     ],
   },
   {
     id: 'creator',
     name: 'Creator',
-    blurb: 'For one channel, every week.',
+    blurb: 'For posting every day.',
     highlights: [
       `${formatQuota(TIER_LIMITS.creator)} of source video a month`,
       `Clips up to ${MAX_SOURCE_SECONDS.creator / 60} minutes`,
+      'About 4¢ a minute, a fraction of cloud tools',
       'Everything in Free',
     ],
     featured: true,
@@ -80,7 +82,7 @@ export default function PricingPlans({ billingEnabled }: { billingEnabled: boole
         <div
           role="radiogroup"
           aria-label="Billing period"
-          className="inline-flex rounded-xl border border-slate-800 bg-slate-900 p-1"
+          className="inline-flex rounded-full border border-white/10 bg-white/[0.04] p-1"
         >
           {(['monthly', 'yearly'] as const).map((p) => (
             <button
@@ -88,8 +90,8 @@ export default function PricingPlans({ billingEnabled }: { billingEnabled: boole
               role="radio"
               aria-checked={period === p}
               onClick={() => setPeriod(p)}
-              className={`min-h-[40px] rounded-lg px-4 text-sm font-semibold transition-colors ${
-                period === p ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'
+              className={`min-h-[40px] rounded-full px-4 text-sm font-semibold transition-colors ${
+                period === p ? 'bg-white/[0.12] text-white' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               {p === 'monthly' ? 'Monthly' : 'Yearly'}
@@ -116,25 +118,25 @@ export default function PricingPlans({ billingEnabled }: { billingEnabled: boole
           return (
             <div
               key={plan.id}
-              className={`relative flex flex-col rounded-2xl border p-6 ${
+              className={`relative flex flex-col rounded-3xl border p-6 ${
                 plan.featured
-                  ? 'border-indigo-500 bg-indigo-500/[0.06] shadow-xl shadow-indigo-500/10'
-                  : 'border-slate-800 bg-slate-900'
+                  ? 'border-pink-400/60 bg-gradient-to-b from-pink-500/[0.12] via-fuchsia-500/[0.05] to-transparent shadow-xl shadow-pink-500/15'
+                  : 'border-white/[0.07] bg-[rgb(var(--fc-surface))]'
               }`}
             >
               {plan.featured && (
-                <span className="absolute -top-3 left-6 rounded-full bg-indigo-500 px-3 py-1 text-xs font-semibold text-white">
+                <span className="absolute -top-3 left-6 fc-gradient rounded-full px-3 py-1 text-xs font-semibold text-white">
                   Most popular
                 </span>
               )}
-              <p className="text-base font-semibold text-white">{plan.name}</p>
+              <p className="fc-display text-xl font-bold text-white">{plan.name}</p>
               <p className="fc-body mt-1">{plan.blurb}</p>
 
               <p className="mt-5 flex items-baseline gap-1.5">
-                <span className="text-4xl font-bold tracking-tight text-white">
+                <span className="fc-display text-5xl font-extrabold tracking-tight text-white">
                   {formatPrice(monthlyCents)}
                 </span>
-                <span className="text-sm text-slate-400">{paid ? '/ month' : 'forever'}</span>
+                <span className="text-sm text-zinc-400">{paid ? '/ month' : 'forever'}</span>
               </p>
               <p className="fc-meta mt-1 h-5">
                 {paid && period === 'yearly'
@@ -146,7 +148,7 @@ export default function PricingPlans({ billingEnabled }: { billingEnabled: boole
 
               <ul className="mt-6 flex-1 space-y-3">
                 {plan.highlights.map((h) => (
-                  <li key={h} className="flex gap-2.5 text-sm text-slate-300">
+                  <li key={h} className="flex gap-2.5 text-sm text-zinc-300">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                     <span>{h}</span>
                   </li>

@@ -6,6 +6,8 @@
  * Node and browser APIs — it must stay pure.
  */
 
+import type { FocusTrack } from './tracking';
+
 export type Ratio = '9:16' | '1:1' | '16:9';
 
 export const RATIOS: readonly Ratio[] = ['9:16', '1:1', '16:9'] as const;
@@ -183,8 +185,9 @@ export function hasOffset(focus?: Partial<Focus> | null): boolean {
  */
 export function filterExpr(
   ratio: Ratio,
-  focus?: Partial<Focus> | null,
+  focus?: Partial<Focus> | FocusTrack | null,
   canvas: { w: number; h: number } = OUTPUT_CANVAS[ratio],
+  overlay?: string | null,
 ): string {
   const { w, h } = canvas;
   const t = aspect(ratio);
@@ -192,16 +195,24 @@ export function filterExpr(
   const cropW = `floor(min(iw\\,ih*${t})/2)*2`;
   const cropH = `floor(min(ih\\,iw/${t})/2)*2`;
 
-  const crop = hasOffset(focus)
-    ? (() => {
-        const f = normalizeFocus(focus);
-        // 6 decimal places is well below one source pixel at any real
-        // resolution, and keeps the expression short.
-        const ox = `max(0\\,floor((iw-${cropW})*${f.x.toFixed(6)}))`;
-        const oy = `max(0\\,floor((ih-${cropH})*${f.y.toFixed(6)}))`;
-        return `crop=${cropW}:${cropH}:${ox}:${oy}`;
-      })()
-    : `crop=${cropW}:${cropH}`;
+  const offsets = (fx: string, fy: string) => {
+    const ox = `max(0\\,floor((iw-${cropW})*${fx}))`;
+    const oy = `max(0\\,floor((ih-${cropH})*${fy}))`;
+    return `crop=${cropW}:${cropH}:${ox}:${oy}`;
+  };
+
+  let crop: string;
+  if (isFocusTrack(focus)) {
+    // Evaluated per frame: the window follows the subject (see tracking.ts).
+    crop = offsets(focus.xExpr, focus.yExpr);
+  } else if (hasOffset(focus)) {
+    const f = normalizeFocus(focus);
+    // 6 decimal places is well below one source pixel at any real
+    // resolution, and keeps the expression short.
+    crop = offsets(f.x.toFixed(6), f.y.toFixed(6));
+  } else {
+    crop = `crop=${cropW}:${cropH}`;
+  }
 
   return [
     crop,
@@ -209,6 +220,13 @@ export function filterExpr(
     // Keep square pixels: the crop rectangle is not exactly the target shape
     // after even-rounding, so compensate instead of letting players stretch.
     'setsar=1',
+    // Burned-in captions draw on the final canvas, so their size and position
+    // are in output pixels whatever the source resolution.
+    ...(overlay ? [overlay] : []),
     'format=yuv420p',
   ].join(',');
+}
+
+function isFocusTrack(f: unknown): f is FocusTrack {
+  return typeof f === 'object' && f !== null && typeof (f as FocusTrack).xExpr === 'string';
 }

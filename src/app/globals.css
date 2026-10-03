@@ -28,11 +28,12 @@
   --team-4: oklch(0.828 0.189 84.429);
   --team-5: oklch(0.769 0.188 70.08);
 
-  /* Surfaces. Lifted slightly off pure slate so panels read as panels. */
-  --fc-bg: 2 6 23;
-  --fc-surface: 15 23 42;
-  --fc-surface-2: 2 6 23;
-  --fc-border: 30 41 59;
+  /* Surfaces. A warm near-black with a violet cast, so the pink/orange brand
+     gradient sits on it the way it does on TikTok and Instagram dark mode. */
+  --fc-bg: 11 9 18;
+  --fc-surface: 21 18 32;
+  --fc-surface-2: 14 12 22;
+  --fc-border: 42 37 58;
 
   /* One radius scale, two steps. */
   --fc-radius: 12px;
@@ -43,26 +44,26 @@
   --fc-tap: 36px;
 
   /* shadcn tokens (HSL triples) consumed by better-auth-ui via
-     tailwind.config.js. Mapped onto the same slate/indigo palette. */
-  --background: 222 47% 11%; /* slate-900, the card the forms sit in */
-  --foreground: 210 40% 98%;
-  --card: 222 47% 11%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222 47% 11%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 239 84% 67%; /* indigo-500 */
+     tailwind.config.js. Mapped onto the brand palette below. */
+  --background: 256 28% 10%; /* --fc-surface, the card the forms sit in */
+  --foreground: 260 30% 98%;
+  --card: 256 28% 10%;
+  --card-foreground: 260 30% 98%;
+  --popover: 256 28% 12%;
+  --popover-foreground: 260 30% 98%;
+  --primary: 330 90% 60%; /* brand pink */
   --primary-foreground: 0 0% 100%;
-  --secondary: 217 33% 17%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217 33% 17%;
-  --muted-foreground: 215 20% 65%;
-  --accent: 217 33% 17%;
-  --accent-foreground: 210 40% 98%;
+  --secondary: 256 22% 18%;
+  --secondary-foreground: 260 30% 98%;
+  --muted: 256 22% 18%;
+  --muted-foreground: 256 12% 68%;
+  --accent: 256 22% 18%;
+  --accent-foreground: 260 30% 98%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 215 25% 27%; /* slate-700 */
-  --input: 215 25% 27%;
-  --ring: 234 89% 74%; /* indigo-400 */
+  --border: 256 20% 24%;
+  --input: 256 20% 24%;
+  --ring: 330 90% 66%;
 }
 
 @tailwind base;
@@ -81,17 +82,16 @@ html {
 body {
   background-color: rgb(var(--fc-bg));
   /* A very low-contrast lift so the page is not a flat void. */
-  background-image: radial-gradient(
-    ellipse 80% 50% at 50% -10%,
-    rgb(79 70 229 / 0.12),
-    transparent 70%
-  );
+  /* Two soft glows in the brand colours so the page has some warmth. */
+  background-image:
+    radial-gradient(ellipse 60% 45% at 15% -5%, rgb(236 72 153 / 0.16), transparent 70%),
+    radial-gradient(ellipse 55% 40% at 90% 0%, rgb(249 115 22 / 0.10), transparent 70%);
   background-attachment: fixed;
 }
 
 /* Visible focus for keyboard users on every interactive element. */
 :focus-visible {
-  outline: 2px solid rgb(129 140 248);
+  outline: 2px solid rgb(244 114 182);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -99,70 +99,83 @@ body {
 @layer components {
   /* ---- surfaces ---- */
   .fc-card {
-    @apply rounded-2xl border border-slate-800 bg-slate-900;
+    @apply rounded-3xl border border-white/[0.07] bg-[rgb(var(--fc-surface))]
+           shadow-[0_1px_0_0_rgb(255_255_255/0.04)_inset];
   }
   .fc-card-inset {
-    @apply rounded-xl border border-slate-800 bg-slate-950;
+    @apply rounded-2xl border border-white/[0.06] bg-[rgb(var(--fc-surface-2))];
+  }
+
+  /* The brand gradient: pink into violet into orange. */
+  .fc-gradient {
+    @apply bg-gradient-to-r from-pink-500 via-fuchsia-500 to-orange-400;
+  }
+  .fc-gradient-text {
+    @apply bg-gradient-to-r from-pink-400 via-fuchsia-400 to-orange-300 bg-clip-text text-transparent;
+  }
+  .fc-display {
+    font-family: var(--font-display), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   }
 
   /* Section heading. One definition so every panel matches. */
   .fc-heading {
-    @apply text-base font-semibold tracking-tight text-white;
+    @apply fc-display text-lg font-bold tracking-tight text-white;
   }
 
   /* Body copy. 14px is the floor; 11px body text was unreadable. */
   .fc-body {
-    @apply text-sm leading-relaxed text-slate-400;
+    @apply text-sm leading-relaxed text-zinc-400;
   }
 
   /* Small print. 12px, never smaller -- legible and still clearly secondary. */
   .fc-meta {
-    @apply text-xs leading-relaxed text-slate-500;
+    @apply text-xs leading-relaxed text-zinc-500;
   }
 
   /* ---- controls ---- */
   .fc-btn {
-    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-4
-           text-sm font-semibold transition-colors disabled:cursor-not-allowed
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full px-5
+           text-sm font-semibold transition-all disabled:cursor-not-allowed
            disabled:opacity-50;
   }
   .fc-btn-primary {
-    @apply fc-btn bg-indigo-500 text-white hover:bg-indigo-400;
+    @apply fc-btn fc-gradient text-white shadow-lg shadow-pink-500/25 hover:brightness-110
+           active:scale-[0.98];
   }
   .fc-btn-secondary {
-    @apply fc-btn border border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800;
+    @apply fc-btn border border-white/10 bg-white/[0.04] text-zinc-100 hover:bg-white/[0.08];
   }
   /* Quiet inline action. Still 36px tall so it is actually clickable. */
   .fc-btn-ghost {
-    @apply inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2 text-xs
-           font-semibold text-slate-400 transition-colors hover:bg-slate-800
-           hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-[36px] items-center gap-1.5 rounded-full px-3 text-xs
+           font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06]
+           hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   /* ---- chips / pills ---- */
   .fc-chip {
-    @apply inline-flex items-center gap-1 rounded-full border border-slate-700
-           bg-slate-950 px-2.5 py-1 text-xs font-medium text-slate-400;
+    @apply inline-flex items-center gap-1 rounded-full border border-white/10
+           bg-white/[0.04] px-2.5 py-1 text-xs font-medium text-zinc-400;
   }
   .fc-chip-accent {
-    @apply inline-flex items-center gap-1 rounded-full border border-indigo-500/25
-           bg-indigo-500/10 px-2.5 py-1 text-xs font-semibold text-indigo-300;
+    @apply inline-flex items-center gap-1 rounded-full border border-pink-500/25
+           bg-pink-500/10 px-2.5 py-1 text-xs font-semibold text-pink-300;
   }
 
   /* ---- notices ---- */
   .fc-notice-error {
-    @apply flex items-start gap-2.5 rounded-xl border border-red-500/25
+    @apply flex items-start gap-2.5 rounded-2xl border border-red-500/25
            bg-red-500/10 p-4 text-sm leading-relaxed text-red-200;
   }
   .fc-notice-warn {
-    @apply flex items-start gap-2.5 rounded-xl border border-amber-500/25
+    @apply flex items-start gap-2.5 rounded-2xl border border-amber-500/25
            bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-200;
   }
 
   /* A link that still meets a usable target size. */
   .fc-link {
-    @apply inline-flex min-h-[32px] items-center text-sm font-medium text-indigo-400
-           underline-offset-4 transition-colors hover:text-indigo-300 hover:underline;
+    @apply inline-flex min-h-[32px] items-center text-sm font-medium text-pink-400
+           underline-offset-4 transition-colors hover:text-pink-300 hover:underline;
   }
 }
 

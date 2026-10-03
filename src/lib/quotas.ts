@@ -10,10 +10,18 @@
 export const RATIOS = ['9:16', '1:1', '16:9'] as const;
 export type RatioId = (typeof RATIOS)[number];
 
+/**
+ * Monthly allowance per tier, in seconds of source.
+ *
+ * Rendering and transcription run on the user's device, so a minute costs us
+ * almost nothing; these are set to beat cloud tools on minutes per dollar
+ * (Opus Clip Starter: 150 min for $15; Creator here: 300 min for $12). Free
+ * matches Opus Clip's free 60 min, but with no watermark and no expiry.
+ */
 export const TIER_LIMITS: Record<string, number> = {
-  free: 180, // 3 minutes of source per month
-  creator: 3600, // 1 hour
-  agency: 14400, // 4 hours
+  free: 3600, // 60 minutes of source per month
+  creator: 18000, // 5 hours
+  agency: 90000, // 25 hours
 };
 
 export const TIER_PRICE_LABEL: Record<string, string> = {
@@ -29,9 +37,9 @@ export function tierLimit(tier: string | null | undefined): number {
 
 /** Largest single source we will accept, in seconds. */
 export const MAX_SOURCE_SECONDS = {
-  free: 180,
-  creator: 900,
-  agency: 3600,
+  free: 600, // 10 minutes
+  creator: 1800, // 30 minutes
+  agency: 3600, // 60 minutes
 } as const;
 
 export function maxSourceSeconds(tier: string | null | undefined): number {
