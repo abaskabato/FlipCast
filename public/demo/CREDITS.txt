@@ -1,0 +1,6 @@
+Demo footage: "Podcast Interview" by cottonbro studio, via Pexels.
+https://www.pexels.com/video/podcast-interview-6878733/
+Used under the Pexels License (https://www.pexels.com/license/).
+Trimmed to 12 s and re-encoded at 720p. podcast-tracked.mp4 and
+podcast-centre.mp4 are unedited Flipcast renders of podcast-source.mp4
+(9:16 with Auto-track, and 9:16 with a plain centre crop).

@@ -51,6 +51,7 @@ import { SiteFooter } from './site-chrome';
 import HeroVisual from './hero-visual';
 import LandingSections from './landing-sections';
 import LiveDemo from './live-demo';
+import RealDemo from './real-demo';
 import { displayName, SiteHeader } from './site-header';
 
 type TargetRatio = Ratio;
@@ -127,6 +128,10 @@ function StepHeading({ n, children, aside }: { n: number; children: React.ReactN
 }
 
 const MAX_FILE_BYTES = BROWSER_MAX_INPUT_BYTES;
+
+/** The demo clip from the landing page (public/demo/CREDITS.txt). */
+const SAMPLE_URL = '/demo/podcast-source.mp4';
+const SAMPLE_NAME = 'sample-podcast.mp4';
 
 /** sessionStorage key carrying a plan picked on /pricing across sign-in. */
 const CHECKOUT_INTENT_KEY = 'flipcast:checkout-intent';
@@ -569,6 +574,24 @@ export default function FlipcastDashboard() {
   const [sourcePreviewFailed, setSourcePreviewFailed] = useState(false);
   useEffect(() => setSourcePreviewFailed(false), [sourceUrl]);
 
+  /** Load the landing-page demo clip, framed with Auto-track so it shows off. */
+  const [sampleLoading, setSampleLoading] = useState(false);
+  const loadSample = useCallback(async () => {
+    document.getElementById('studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setSampleLoading(true);
+    try {
+      const res = await fetch(SAMPLE_URL);
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      setTrackingMode('smart_face');
+      await acceptFile(new File([blob], SAMPLE_NAME, { type: 'video/mp4' }));
+    } catch {
+      setError('Could not load the sample clip. Check your connection and try again.');
+    } finally {
+      setSampleLoading(false);
+    }
+  }, [acceptFile]);
+
   /** From the landing CTAs: bring the studio into view and open the picker. */
   const startFromCta = () => {
     document.getElementById('studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -663,6 +686,8 @@ export default function FlipcastDashboard() {
           <p className="fc-body mt-1">Drop a video and get every format ready to post.</p>
         </div>
       )}
+
+      {!sessionPending && !signedIn && <RealDemo onSample={() => void loadSample()} />}
 
       {!sessionPending && !signedIn && <LiveDemo onStart={startFromCta} />}
 
@@ -788,6 +813,22 @@ export default function FlipcastDashboard() {
               on your device.
             </p>
             <p className="fc-meta">MP4, MOV, WebM or MKV · up to {formatBytes(MAX_FILE_BYTES)}</p>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void loadSample();
+              }}
+              disabled={sampleLoading}
+              className="fc-btn-ghost mt-1 !text-pink-300"
+            >
+              {sampleLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              No video handy? Try a sample clip
+            </button>
           </div>
         </div>
       )}

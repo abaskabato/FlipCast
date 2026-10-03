@@ -192,13 +192,13 @@ export default function LiveDemo({ onStart }: { onStart: () => void }) {
   return (
     <section ref={rootRef} aria-labelledby="demo" className="pt-16">
       <div className="text-center">
-        <p className="fc-chip-accent mx-auto w-fit">Live demo</p>
+        <p className="fc-chip-accent mx-auto w-fit">Play with it</p>
         <h2 id="demo" className="fc-display mt-4 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-          Watch the crop follow the speaker
+          Every format, every caption style
         </h2>
         <p className="fc-body mx-auto mt-2 max-w-xl">
-          Switch to Centre and see what a plain crop does when someone moves. Then try the other
-          formats and caption styles. This is the same framing logic your clips get.
+          Flip between shapes, framing and caption styles to see how they combine. Switch to
+          Centre and watch what happens when the speaker moves.
         </p>
       </div>
 
