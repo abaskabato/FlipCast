@@ -72,6 +72,10 @@ export class RenderAbortedError extends Error {
 
 let instance: FFmpegInstance | null = null;
 let loading: Promise<FFmpegInstance> | null = null;
+/** Whether `instance` is the multi-threaded core. */
+let instanceIsMt = false;
+/** Set after the multi-threaded core fails a render; this tab then stays on ST. */
+let mtDisabled = false;
 
 /**
  * The multi-threaded core needs SharedArrayBuffer, which needs the page to be
@@ -80,6 +84,7 @@ let loading: Promise<FFmpegInstance> | null = null;
  */
 export function prefersMultiThread(): boolean {
   return (
+    !mtDisabled &&
     typeof crossOriginIsolated !== 'undefined' &&
     crossOriginIsolated &&
     typeof SharedArrayBuffer !== 'undefined' &&
@@ -121,12 +126,14 @@ export async function getFFmpeg(
     if (prefersMultiThread()) {
       try {
         instance = await loadCore(true);
+        instanceIsMt = true;
         return instance;
       } catch {
         // Fall through to single-threaded.
       }
     }
     instance = await loadCore(false);
+    instanceIsMt = false;
     return instance;
   })();
 
@@ -222,10 +229,8 @@ const AUDIO = ['-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-ac', '2'];
  * `source` is optional: without it every output renders at 1080-class and
  * nothing is copied, which is always correct, just slower.
  */
-export async function renderToRatios(
-  file: File,
-  ratios: Ratio[],
-  opts: {
+/** Everything renderToRatios accepts. */
+export type RenderOptions = {
     onProgress?: (p: RenderProgress) => void;
     onLog?: (line: string) => void;
     signal?: AbortSignal;
@@ -236,7 +241,48 @@ export async function renderToRatios(
     /** Two people on camera together (layout.ts): 9:16 stacks them. Needs `source`. */
     split?: SplitLayout | null;
     captions?: CaptionRequest | null;
-  } = {},
+};
+
+/**
+ * The multi-threaded core crashed or went silent mid-render. Carries the
+ * transcript (if one was made) so the retry does not transcribe again.
+ */
+class EngineCrashError extends Error {
+  readonly words: CaptionWord[] | null | undefined;
+  constructor(words: CaptionWord[] | null | undefined) {
+    super('The render engine stopped responding.');
+    this.name = 'EngineCrashError';
+    this.words = words;
+  }
+}
+
+/** No log line from the multi-threaded engine for this long means it has hung. */
+const MT_SILENCE_MS = 30_000;
+
+export async function renderToRatios(file: File, ratios: Ratio[], opts: RenderOptions = {}): Promise<RenderResult> {
+  try {
+    return await renderOnce(file, ratios, opts, undefined);
+  } catch (e) {
+    if (!(e instanceof EngineCrashError) || opts.signal?.aborted) throw e;
+    // The multi-threaded core is fast but fragile; the single-threaded one is
+    // slower and dependable. Switch for the rest of this tab and try again.
+    console.warn('[render] multi-threaded engine failed; retrying single-threaded');
+    mtDisabled = true;
+    await disposeEngine();
+    opts.onProgress?.({ progress: 0, label: 'Switching to the compatibility engine…' });
+    return renderOnce(file, ratios, opts, e.words);
+  }
+}
+
+/**
+ * One attempt. `knownWords` skips transcription on a retry: an array is the
+ * transcript, null means the source had no audio, undefined means not yet run.
+ */
+async function renderOnce(
+  file: File,
+  ratios: Ratio[],
+  opts: RenderOptions,
+  knownWords: CaptionWord[] | null | undefined,
 ): Promise<RenderResult> {
   if (ratios.length === 0) throw new Error('No output formats requested.');
 
@@ -290,10 +336,10 @@ export async function renderToRatios(
       }
     }
 
+    let words: CaptionWord[] | null | undefined = knownWords;
     if (opts.captions) {
-      let words: CaptionWord[] | null;
       try {
-        words = await captionWords(ffmpeg, srcName, opts.captions, (f, label) =>
+        words ??= await captionWords(ffmpeg, srcName, opts.captions, (f, label) =>
           opts.onProgress?.({ progress: 0.05 + f * (renderFrom - 0.05), label }),
         );
       } catch (e) {
@@ -332,11 +378,36 @@ export async function renderToRatios(
 
     opts.onProgress?.({ progress: renderFrom, label: `Rendering ${formats}…` });
     ffmpeg.on('progress', onProgress);
+    // The multi-threaded core can crash inside a worker without rejecting, which
+    // would leave the bar at 0% for ever. ffmpeg logs every frame, so silence
+    // means it has hung: tear it down and let renderToRatios retry.
+    const mt = instanceIsMt;
+    let lastLog = Date.now();
+    let hung = false;
+    const heartbeat = () => {
+      lastLog = Date.now();
+    };
+    ffmpeg.on('log', heartbeat);
+    const watchdog = mt
+      ? window.setInterval(() => {
+          if (Date.now() - lastLog > MT_SILENCE_MS) {
+            hung = true;
+            void disposeEngine();
+          }
+        }, 2_000)
+      : 0;
     try {
       await ffmpeg.exec(buildArgs(srcName, plan, opts.focus));
+    } catch (e) {
+      if (opts.signal?.aborted) throw new RenderAbortedError();
+      if (mt) throw new EngineCrashError(words);
+      throw e;
     } finally {
+      window.clearInterval(watchdog);
       ffmpeg.off('progress', onProgress);
+      ffmpeg.off('log', heartbeat);
     }
+    if (hung) throw new EngineCrashError(words);
     if (opts.signal?.aborted) throw new RenderAbortedError();
 
     for (const item of plan) {
@@ -477,10 +548,27 @@ function canStreamCopy(source: SourceInfo | null | undefined, canvas: { w: numbe
   return source.h264Profile === 66 || source.h264Profile === 77 || source.h264Profile === 100;
 }
 
+/**
+ * Thread counts, set explicitly. The multi-threaded core has a fixed pool of
+ * 32 worker threads; left to choose, ffmpeg sizes the decoder, the filters and
+ * every x264 encoder from the CPU count, which on an 8-core laptop overruns
+ * the pool and crashes the engine at 0%. Two decode threads, two filter
+ * threads and up to four per encoder (twelve across all encoders) stays well
+ * inside it. The single-threaded core ignores these.
+ */
+const DECODE_THREADS = 2;
+const FILTER_THREADS = 2;
+const ENCODE_THREAD_BUDGET = 12;
+const MAX_ENCODE_THREADS = 4;
+
 /** One ffmpeg invocation: decode once, split to every encoded output. */
 export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus | null): string[] {
   const encoded = plan.filter((p) => !p.copy);
-  const args = ['-i', srcName];
+  const encodeThreads = Math.max(
+    1,
+    Math.min(MAX_ENCODE_THREADS, Math.floor(ENCODE_THREAD_BUDGET / Math.max(1, encoded.length))),
+  );
+  const args = ['-threads', String(DECODE_THREADS), '-i', srcName];
 
   if (encoded.length > 0) {
     const branches = encoded.map((_, i) => `[s${i}]`).join('');
@@ -495,13 +583,13 @@ export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus 
         return `${input}${filterExpr(p.ratio, p.track ?? focus, p.canvas, overlay)}[v${i}]`;
       }),
     ].filter(Boolean);
-    args.push('-filter_complex', graph.join(';'));
+    args.push('-filter_complex_threads', String(FILTER_THREADS), '-filter_complex', graph.join(';'));
   }
 
   for (const p of plan) {
     const video = p.copy
       ? ['-map', '0:v:0', '-c:v', 'copy']
-      : ['-map', `[v${encoded.indexOf(p)}]`, ...VIDEO_ENCODE];
+      : ['-map', `[v${encoded.indexOf(p)}]`, ...VIDEO_ENCODE, '-threads', String(encodeThreads)];
     args.push(...video, ...AUDIO, '-movflags', '+faststart', p.outName);
   }
   return args;
