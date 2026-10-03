@@ -37,6 +37,11 @@ let cached: Stripe | null | undefined;
  * Memoized because constructing a client throws on a malformed key, and this is
  * called per-request. `undefined` = not yet tried, `null` = tried and absent.
  */
+function apiBase(raw: string) {
+  const u = new URL(raw);
+  return { host: u.hostname, port: Number(u.port) || undefined, protocol: u.protocol.replace(':', '') as 'http' | 'https' };
+}
+
 export function stripe(): Stripe | null {
   if (cached !== undefined) return cached;
 
@@ -56,6 +61,8 @@ export function stripe(): Stripe | null {
       apiVersion: '2026-08-26.dahlia',
       typescript: true,
       appInfo: { name: 'Flipcast', version: '1.0.0' },
+      // Tests point the client at a local stand-in (scripts/verify-billing.mjs).
+      ...(process.env.STRIPE_API_BASE ? apiBase(process.env.STRIPE_API_BASE) : {}),
     });
   } catch (e) {
     console.error('[stripe] could not construct client:', e instanceof Error ? e.message : e);

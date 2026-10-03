@@ -1,7 +1,10 @@
 /**
  * One-shot Stripe catalogue setup. Idempotent: re-running reuses what exists.
  *
- *   STRIPE_SECRET_KEY=sk_test_... node scripts/stripe-setup.mjs https://your-domain
+ *   node --env-file=.env.stripe-key scripts/stripe-setup.mjs https://your-domain
+ *
+ * with STRIPE_SECRET_KEY in that (git-ignored) file, so the key never appears
+ * on a command line or in shell history.
  *
  * Creates:
  *   - Creator and Agency products, each with a monthly and a yearly price,
@@ -11,12 +14,13 @@
  *   - a customer-portal configuration that lets subscribers switch between the
  *     four prices, update their card, see invoices and cancel.
  *
- * Prints the env vars to set. The webhook signing secret is only returned when
+ * Writes the env vars to set into .env.stripe-live (or -test), not the terminal. The webhook signing secret is only returned when
  * the endpoint is first created, so if the endpoint already exists it is left
  * alone and you are told where to find the secret.
  *
  * Amounts must match PLAN_PRICES in src/lib/billing/plans.ts.
  */
+import { writeFileSync } from 'node:fs';
 import Stripe from 'stripe';
 
 const key = process.env.STRIPE_SECRET_KEY?.trim();
@@ -26,7 +30,9 @@ if (!key || !site || !/^https:\/\//.test(site)) {
   process.exit(1);
 }
 
-const stripe = new Stripe(key);
+/** Must match src/lib/billing/stripe.ts, which the webhook handler is typed against. */
+const API_VERSION = '2026-08-26.dahlia';
+const stripe = new Stripe(key, { apiVersion: API_VERSION });
 const live = key.startsWith('sk_live_');
 
 const PLANS = [
@@ -36,6 +42,8 @@ const PLANS = [
 
 const EVENTS = [
   'checkout.session.completed',
+  // Delayed payment methods: access starts when the money arrives.
+  'checkout.session.async_payment_succeeded',
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted',
@@ -84,10 +92,18 @@ const existingHook = endpoints.data.find((e) => e.url === webhookUrl);
 if (existingHook) {
   await stripe.webhookEndpoints.update(existingHook.id, { enabled_events: EVENTS, disabled: false });
   console.log(`= webhook ${existingHook.id} already exists (events refreshed)`);
+  if (existingHook.api_version !== API_VERSION) {
+    // The payload version can only be set when an endpoint is created.
+    console.log(`! its events use API version ${existingHook.api_version ?? 'the account default'}, not ${API_VERSION}.`);
+    console.log('  Delete it in the Stripe dashboard and run this again to recreate it pinned.');
+  }
   console.log('  Its signing secret is shown once at creation; reveal it in the Stripe');
   console.log(`  dashboard → Developers → Webhooks → ${webhookUrl}`);
 } else {
-  const hook = await stripe.webhookEndpoints.create({ url: webhookUrl, enabled_events: EVENTS });
+  // Pin the payload version to the one the handler is written against
+  // (src/lib/billing/stripe.ts). Without it events follow the account's
+  // default version, which can change shape under the handler.
+  const hook = await stripe.webhookEndpoints.create({ url: webhookUrl, enabled_events: EVENTS, api_version: API_VERSION });
   env.STRIPE_WEBHOOK_SECRET = hook.secret;
   console.log(`+ webhook ${hook.id} -> ${webhookUrl}`);
 }
@@ -121,6 +137,11 @@ const portal = existingPortal
 env.STRIPE_PORTAL_CONFIG_ID = portal.id;
 console.log(`${existingPortal ? '=' : '+'} portal configuration ${portal.id}`);
 
-console.log(`\nSet these on the server (${live ? 'LIVE' : 'test'} mode):\n`);
-for (const [k, v] of Object.entries(env)) console.log(`${k}=${v}`);
-console.log('');
+// The webhook secret is a credential, so values go to a git-ignored file
+// (every .env* except .env.example is ignored) instead of the terminal, where
+// they would end up in scrollback and logs.
+const outFile = `.env.stripe-${live ? 'live' : 'test'}`;
+writeFileSync(outFile, `${Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n')}\n`, { mode: 0o600 });
+console.log(`\nWrote ${Object.keys(env).length} values for ${live ? 'LIVE' : 'test'} mode to ${outFile}:`);
+for (const k of Object.keys(env)) console.log(`  ${k}`);
+console.log(`Add them to the server's environment (Vercel → Settings → Environment Variables, Production),\nthen delete ${outFile}.`);

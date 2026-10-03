@@ -4,6 +4,7 @@ import type Stripe from 'stripe';
 import { stripe } from '@/lib/billing/stripe';
 import {
   findUserByCustomerId,
+  getBillingState,
   resetUsageWindow,
   setStripeCustomerId,
   setUserTier,
@@ -38,6 +39,30 @@ function tierFromSubscription(sub: Stripe.Subscription): string | null {
   return tierForPrice(priceId);
 }
 
+/**
+ * Set the user's tier from the subscription as it is *now*, fetched from
+ * Stripe, not from the event's snapshot. Events can arrive late, twice or out
+ * of order; a stale "active" processed after "deleted" must not re-grant a
+ * paid plan, and reading current state makes every delivery idempotent.
+ */
+async function applySubscription(client: Stripe, subscriptionId: string, userId: string): Promise<void> {
+  const sub = await client.subscriptions.retrieve(subscriptionId);
+  const status = sub.status;
+  // Cancelled-but-not-yet-expired still grants access until period end
+  // (status stays active with cancel_at_period_end), so only the terminal
+  // states move the tier down. past_due keeps access while Stripe retries.
+  if (status === 'active' || status === 'trialing' || status === 'past_due') {
+    const tier = tierFromSubscription(sub);
+    if (!tier) return;
+    const before = await getBillingState(userId);
+    await setUserTier(userId, tier);
+    // A new subscription starts a fresh usage window, once.
+    if (before?.tier === 'free') await resetUsageWindow(userId);
+  } else if (status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired') {
+    await setUserTier(userId, 'free');
+  }
+}
+
 export async function POST(request: Request) {
   const client = stripe();
   if (!client) {
@@ -68,45 +93,30 @@ export async function POST(request: Request) {
 
   try {
     switch (event.type) {
-      case 'checkout.session.completed': {
+      // Checkout finished. With a delayed payment method (bank debits) the
+      // session completes before the money arrives: payment_status is then
+      // "unpaid" and access waits for async_payment_succeeded.
+      case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded': {
         const session = event.data.object as Stripe.Checkout.Session;
         const userId = session.client_reference_id ?? session.metadata?.userId;
-        const tier = session.metadata?.tier;
-        if (userId) {
-          // The customer only exists once checkout completes, so this is where
-          // its id is first known. The portal and repeat checkouts need it.
-          const customerId =
-            typeof session.customer === 'string' ? session.customer : session.customer?.id;
-          if (customerId) await setStripeCustomerId(userId, customerId);
-        }
-        if (userId && (tier === 'creator' || tier === 'agency')) {
-          await setUserTier(userId, tier);
-          await resetUsageWindow(userId);
-        }
-        break;
-      }
-
-      case 'customer.subscription.updated':
-      case 'customer.subscription.created': {
-        const sub = event.data.object as Stripe.Subscription;
-        const userId = await resolveUserId(sub);
         if (!userId) break;
-        // Cancelled-but-not-yet-expired still grants access until period end, so
-        // only move the tier down on the terminal states.
-        const status = sub.status;
-        if (status === 'active' || status === 'trialing' || status === 'past_due') {
-          const tier = tierFromSubscription(sub);
-          if (tier) await setUserTier(userId, tier);
-        } else if (status === 'canceled' || status === 'unpaid' || status === 'incomplete_expired') {
-          await setUserTier(userId, 'free');
-        }
+        // The customer only exists once checkout completes, so this is where
+        // its id is first known. The portal and repeat checkouts need it.
+        const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
+        if (customerId) await setStripeCustomerId(userId, customerId);
+        if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') break;
+        const subId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
+        if (subId) await applySubscription(client, subId, userId);
         break;
       }
 
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         const sub = event.data.object as Stripe.Subscription;
         const userId = await resolveUserId(sub);
-        if (userId) await setUserTier(userId, 'free');
+        if (userId) await applySubscription(client, sub.id, userId);
         break;
       }
 
@@ -116,7 +126,7 @@ export async function POST(request: Request) {
     }
   } catch (e) {
     console.error(`[billing] handler failed for ${event.type}:`, e instanceof Error ? e.message : e);
-    // 500 makes Stripe retry, which is what we want for a transient DB failure.
+    // 500 makes Stripe retry, which is what we want for a transient failure.
     return NextResponse.json({ error: 'handler_failed' }, { status: 500 });
   }
 

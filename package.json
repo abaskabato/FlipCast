@@ -25,7 +25,8 @@
     "verify:layout": "node --import ./scripts/ts-register.mjs scripts/verify-layout.mjs",
     "verify:import": "node --import ./scripts/ts-register.mjs scripts/verify-import.mjs",
     "verify:clips": "node --import ./scripts/ts-register.mjs scripts/verify-clips.mjs",
-    "verify:social": "node --import ./scripts/ts-register.mjs scripts/verify-social.mjs"
+    "verify:social": "node --import ./scripts/ts-register.mjs scripts/verify-social.mjs",
+    "verify:billing": "node --import ./scripts/ts-register.mjs scripts/verify-billing.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
