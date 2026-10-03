@@ -6,8 +6,9 @@
  * Runs in a worker so the page stays responsive. Audio arrives as 16 kHz mono
  * PCM extracted by the render engine; nothing is sent anywhere. The only
  * network traffic is the one-time model download from Hugging Face (about
- * 77 MB, then cached by the browser), and the ONNX runtime is served from our
- * own origin (public/ort, copied by scripts/sync-ffmpeg-core.mjs).
+ * 77 MB for the default model, 249 MB for the accurate one, then cached by the
+ * browser), and the ONNX runtime is served from our own origin (public/ort,
+ * copied by scripts/sync-ffmpeg-core.mjs).
  *
  * Long audio is cut into segments of about two minutes at the quietest point
  * near each boundary, so a word is rarely split and the UI gets real progress
@@ -16,7 +17,12 @@
 
 import { env, pipeline } from '@huggingface/transformers';
 
-const MODEL = 'onnx-community/whisper-base_timestamped';
+/** Whisper base is quick to fetch and run; small is clearly more accurate, notably outside English. */
+const MODELS = {
+  fast: 'onnx-community/whisper-base_timestamped',
+  accurate: 'onnx-community/whisper-small_timestamped',
+} as const;
+export type CaptionModel = keyof typeof MODELS;
 const SAMPLE_RATE = 16_000;
 const SEGMENT_SECONDS = 120;
 /** How far either side of a boundary to look for a quiet place to cut. */
@@ -34,7 +40,7 @@ if (env.backends.onnx.wasm) {
   };
 }
 
-export type WorkerRequest = { audio: Float32Array };
+export type WorkerRequest = { audio: Float32Array; model?: CaptionModel };
 
 export type WorkerMessage =
   | { type: 'download'; loaded: number; total: number }
@@ -52,10 +58,10 @@ const post = (m: WorkerMessage) => (self as unknown as Worker).postMessage(m);
 
 let asrPromise: Promise<Asr> | null = null;
 
-function loadModel(): Promise<Asr> {
+function loadModel(model: CaptionModel): Promise<Asr> {
   // Track bytes per file so the overall download fraction is honest.
   const files = new Map<string, { loaded: number; total: number }>();
-  asrPromise ??= pipeline('automatic-speech-recognition', MODEL, {
+  asrPromise ??= pipeline('automatic-speech-recognition', MODELS[model], {
     device: 'wasm',
     dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
     progress_callback: (p: { status: string; file?: string; loaded?: number; total?: number }) => {
@@ -103,8 +109,8 @@ function segmentBounds(audio: Float32Array): number[] {
 
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   try {
-    const { audio } = e.data;
-    const asr = await loadModel();
+    const { audio, model = 'fast' } = e.data;
+    const asr = await loadModel(model);
     const bounds = segmentBounds(audio);
     const words: { text: string; start: number; end: number }[] = [];
 

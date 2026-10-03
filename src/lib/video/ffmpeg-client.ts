@@ -18,7 +18,7 @@
 import { loadFFmpegClass, type FFmpegInstance } from './ffmpeg-loader';
 import { filterExpr, outputCanvas, type Focus, type Ratio } from './geometry';
 import { focusTrackFor, type FocusTrack, type SubjectPath } from './tracking';
-import { splitFilter, type SplitLayout } from './layout';
+import { splitFilter, type SplitSegment } from './layout';
 import {
   captionFonts,
   buildAss,
@@ -229,6 +229,21 @@ const AUDIO = ['-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-ac', '2'];
  * `source` is optional: without it every output renders at 1080-class and
  * nothing is copied, which is always correct, just slower.
  */
+/** A stretch of the source, in seconds. */
+export type Trim = { start: number; end: number };
+
+/** Words inside `trim`, moved onto the trimmed clip's timeline. */
+export function wordsInTrim(words: CaptionWord[], trim: Trim | null | undefined): CaptionWord[] {
+  if (!trim) return words;
+  return words
+    .filter((w) => w.end > trim.start && w.start < trim.end)
+    .map((w) => ({
+      text: w.text,
+      start: Math.max(0, w.start - trim.start),
+      end: Math.min(trim.end, w.end) - trim.start,
+    }));
+}
+
 /** Everything renderToRatios accepts. */
 export type RenderOptions = {
     onProgress?: (p: RenderProgress) => void;
@@ -238,8 +253,19 @@ export type RenderOptions = {
     source?: SourceInfo | null;
     /** Subject path from subject-detect.ts; the crop follows it. Needs `source`. */
     track?: SubjectPath | null;
-    /** Two people on camera together (layout.ts): 9:16 stacks them. Needs `source`. */
-    split?: SplitLayout | null;
+    /** Stretches with two people on camera (layout.ts): 9:16 stacks them there. Needs `source`. */
+    split?: SplitSegment[] | null;
+    /**
+     * Render only this stretch of the source, in seconds. Times in `track`
+     * and `split` are relative to `trim.start`, as detectSubject returns them
+     * for a range.
+     */
+    trim?: Trim | null;
+    /**
+     * A transcript already made for this file (source timeline), e.g. while
+     * finding clips. Used for captions instead of transcribing again.
+     */
+    captionWords?: CaptionWord[] | null;
     captions?: CaptionRequest | null;
 };
 
@@ -291,8 +317,11 @@ async function renderOnce(
   const startedAt = performance.now();
 
   const srcName = `in-${Date.now()}.${extensionFor(file.name)}`;
-  // Captions are drawn into the picture, so a captioned output is never a copy.
-  const plan = planRender(ratios, opts.source, { forceEncode: Boolean(opts.captions) });
+  // Captions are drawn into the picture and a trim changes the timeline, so
+  // either way an output is never a copy.
+  const plan = planRender(ratios, opts.source, { forceEncode: Boolean(opts.captions || opts.trim) });
+  // A transcript made earlier (source timeline) skips transcription.
+  if (knownWords === undefined && opts.captionWords) knownWords = wordsInTrim(opts.captionWords, opts.trim);
   const formats = ratios.length === 1 ? ratios[0] : `${ratios.length} formats`;
   const notes: string[] = [];
   let captions: RenderResult['captions'] = null;
@@ -328,10 +357,10 @@ async function renderOnce(
         if (!item.copy) item.track = focusTrackFor(opts.track, item.ratio, opts.source.width, opts.source.height);
       }
     }
-    if (opts.split && opts.source) {
+    if (opts.split?.length && opts.source) {
       for (const item of plan) {
         if (!item.copy && item.ratio === '9:16') {
-          item.split = { layout: opts.split, srcW: opts.source.width, srcH: opts.source.height };
+          item.split = { segments: opts.split, srcW: opts.source.width, srcH: opts.source.height };
         }
       }
     }
@@ -339,8 +368,12 @@ async function renderOnce(
     let words: CaptionWord[] | null | undefined = knownWords;
     if (opts.captions) {
       try {
-        words ??= await captionWords(ffmpeg, srcName, opts.captions, (f, label) =>
-          opts.onProgress?.({ progress: 0.05 + f * (renderFrom - 0.05), label }),
+        words ??= await captionWords(
+          ffmpeg,
+          srcName,
+          opts.captions,
+          (f, label) => opts.onProgress?.({ progress: 0.05 + f * (renderFrom - 0.05), label }),
+          opts.trim,
         );
       } catch (e) {
         if (opts.signal?.aborted) throw new RenderAbortedError();
@@ -397,7 +430,7 @@ async function renderOnce(
         }, 2_000)
       : 0;
     try {
-      await ffmpeg.exec(buildArgs(srcName, plan, opts.focus));
+      await ffmpeg.exec(buildArgs(srcName, plan, opts.focus, opts.trim));
     } catch (e) {
       if (opts.signal?.aborted) throw new RenderAbortedError();
       if (mt) throw new EngineCrashError(words);
@@ -447,17 +480,50 @@ async function renderOnce(
 const AUDIO_PCM = 'audio.f32';
 
 /**
+ * Input options that read only `trim` from the source. Placed before -i, so
+ * ffmpeg seeks to the nearest earlier keyframe and decodes forward to the exact
+ * start; output timestamps then begin at 0.
+ */
+function trimInput(trim: Trim | null | undefined): string[] {
+  if (!trim) return [];
+  const sec = (n: number) => String(Math.round(n * 1000) / 1000);
+  return ['-ss', sec(trim.start), '-t', sec(Math.max(0.1, trim.end - trim.start))];
+}
+
+/**
+ * Transcribe a whole file on this device without rendering anything: the
+ * audio is pulled out with the render engine and handed to `transcribe`.
+ * Returns null when the file has no audio track. Used to find clips.
+ */
+export async function transcribeSource(
+  file: File,
+  transcribe: CaptionRequest['transcribe'],
+  onProgress?: (fraction: number, label: string) => void,
+): Promise<CaptionWord[] | null> {
+  const ffmpeg = await getFFmpeg();
+  const srcName = `tx-${Date.now()}.${extensionFor(file.name)}`;
+  await ffmpeg.writeFile(srcName, await readFileBytes(file));
+  try {
+    return await captionWords(ffmpeg, srcName, { transcribe }, onProgress ?? (() => undefined));
+  } finally {
+    await ffmpeg.deleteFile(srcName).catch(() => undefined);
+  }
+}
+
+/**
  * Pull 16 kHz mono float PCM out of the source and hand it to the transcriber.
  * Returns null when the source has no audio stream.
  */
 async function captionWords(
   ffmpeg: FFmpegInstance,
   srcName: string,
-  request: CaptionRequest,
+  request: Pick<CaptionRequest, 'transcribe'>,
   onProgress: (fraction: number, label: string) => void,
+  trim?: Trim | null,
 ): Promise<CaptionWord[] | null> {
   onProgress(0, 'Listening to the audio…');
   const code = await ffmpeg.exec([
+    ...trimInput(trim),
     '-i', srcName, '-vn', '-map', '0:a:0', '-ac', '1', '-ar', '16000', '-f', 'f32le', AUDIO_PCM,
   ]);
   let pcm: Float32Array;
@@ -515,7 +581,7 @@ type PlannedOutput = {
   /** ASS file in the ffmpeg FS to burn in. */
   subtitles?: string;
   /** Stack two people top and bottom instead of cropping one window. */
-  split?: { layout: SplitLayout; srcW: number; srcH: number };
+  split?: { segments: SplitSegment[]; srcW: number; srcH: number };
 };
 
 /** Decide size and copy-vs-encode per output. Pure, so the UI can show it. */
@@ -562,13 +628,13 @@ const ENCODE_THREAD_BUDGET = 12;
 const MAX_ENCODE_THREADS = 4;
 
 /** One ffmpeg invocation: decode once, split to every encoded output. */
-export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus | null): string[] {
+export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus | null, trim?: Trim | null): string[] {
   const encoded = plan.filter((p) => !p.copy);
   const encodeThreads = Math.max(
     1,
     Math.min(MAX_ENCODE_THREADS, Math.floor(ENCODE_THREAD_BUDGET / Math.max(1, encoded.length))),
   );
-  const args = ['-threads', String(DECODE_THREADS), '-i', srcName];
+  const args = ['-threads', String(DECODE_THREADS), ...trimInput(trim), '-i', srcName];
 
   if (encoded.length > 0) {
     const branches = encoded.map((_, i) => `[s${i}]`).join('');
@@ -578,7 +644,10 @@ export function buildArgs(srcName: string, plan: PlannedOutput[], focus?: Focus 
         const input = encoded.length > 1 ? `[s${i}]` : '[0:v]';
         const overlay = p.subtitles ? `subtitles=filename=${p.subtitles}:fontsdir=${FONTS_DIR}` : null;
         if (p.split) {
-          return splitFilter(p.split.layout, p.split.srcW, p.split.srcH, p.canvas, input, `[v${i}]`, `p${i}`, overlay);
+          // The tracked crop without its final format step: split screen is
+          // laid over it, then captions and format are applied once at the end.
+          const base = filterExpr(p.ratio, p.track ?? focus, p.canvas).replace(/,format=yuv420p$/, '');
+          return splitFilter(p.split.segments, p.split.srcW, p.split.srcH, p.canvas, base, input, `[v${i}]`, `p${i}`, overlay);
         }
         return `${input}${filterExpr(p.ratio, p.track ?? focus, p.canvas, overlay)}[v${i}]`;
       }),

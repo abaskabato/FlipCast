@@ -115,6 +115,41 @@ first would break "your footage never leaves your device".
   (glyph coverage and libass fallback for 26 languages) and through the
   in-browser engine.
 
+## 3c. Closing the gaps with Opus Clip (2026-10-03)
+
+- **Layouts switch mid-clip.** `planSplitSegments` returns time stretches; the
+  9:16 output shows split screen only while two people are on camera
+  (majority vote over neighbouring samples, stretches under 2 s ignored, gaps
+  under 1.2 s bridged) and the tracked crop otherwise, in the same ffmpeg pass.
+- **Captions.** Two new styles (Reveal, One word) and a pop-in on the spoken
+  word; an opt-in "High accuracy" model (Whisper small, 249 MB) next to the
+  default base model.
+- **Import from a link.** Dropbox and Google Drive share links, and direct
+  file links. The browser fetches directly when the host allows it; otherwise
+  `/api/import` passes the file through in 4 MB range requests (the Vercel
+  response cap), storing nothing, with SSRF checks at connect time. Streaming
+  sites (YouTube, TikTok, ...) are refused: their terms forbid downloading.
+- **AI clip finding.** Speech is transcribed on the device; only the
+  transcript goes to `/api/clips`, which asks Claude (Anthropic SDK through
+  Vercel AI Gateway, `anthropic/claude-opus-5.5`, structured output) for
+  stand-alone clips by line number. "Use this clip" renders just that stretch,
+  with detection limited to it and captions reusing the transcript.
+
+Verified by `verify:layout`, `verify:captions`, `verify:import` and
+`verify:clips` (the Claude call against a local stand-in for AI Gateway), and
+end to end through the in-browser engine.
+
+### Going live: what needs your accounts
+
+1. **AI Gateway** (clip finding): enable AI Gateway on the Vercel team. The
+   deployment authenticates with its OIDC token automatically; AI Gateway needs
+   credits or a payment method on file (a 403 `customer_verification_required`
+   means the latter). Optional: `AI_GATEWAY_MODEL` to change the model.
+2. **Stripe live mode**: activate/claim the Stripe account, then run
+   `STRIPE_SECRET_KEY=sk_live_... node scripts/stripe-setup.mjs https://flipcast.dev`
+   and set the `STRIPE_*` variables it prints in Vercel (Production).
+3. **Vercel Pro**: Hobby is for non-commercial use; required before charging.
+
 Known limits: Auto-track needs a format the browser can decode
 (falls back to centre otherwise); transcription speed depends on the device.
 

@@ -80,6 +80,35 @@ check(srt.includes('format.'), '.srt keeps punctuation');
 const empty = buildAss([], '9:16', CANVAS['9:16'], 'bold');
 check(empty.includes('[Events]') && !empty.includes('Dialogue:'), 'no words -> valid script with no captions');
 
+// ---- animated styles ----------------------------------------------------------
+
+/** White text pixels in the frame, and the horizontal extent they span. */
+function inkOf(ratio, style, t) {
+  const { w, h } = CANVAS[ratio];
+  const px = frameWithCaptions(ratio, style, t);
+  let white = 0, minX = w, maxX = 0;
+  for (let i = 0; i < w * h; i++) {
+    const r = px[i * 3], g = px[i * 3 + 1], b = px[i * 3 + 2];
+    if ((r > 230 && g > 230 && b > 230) || (r > 220 && g > 190 && b < 80)) {
+      white++;
+      const x = i % w;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+    }
+  }
+  return { white, span: maxX - minX };
+}
+// 1.3 s: "flip" is being spoken; on its 9:16 line "one" has not been said yet.
+const boldInk = inkOf('9:16', 'bold', 1.45);
+const revealInk = inkOf('9:16', 'reveal', 1.45);
+const singleInk = inkOf('9:16', 'single', 1.45);
+check(revealInk.white > 200 && revealInk.white < boldInk.white * 0.85,
+  `reveal hides words not yet spoken (${revealInk.white} px vs ${boldInk.white} for the full line)`);
+check(singleInk.white > 200 && singleInk.span < boldInk.span * 0.75,
+  `one-word style shows a single word (${singleInk.span} px wide vs ${boldInk.span} for the line)`);
+const popStart = inkOf('9:16', 'bold', 1.21);
+check(popStart.span > boldInk.span, `the spoken word pops in larger, then settles (${popStart.span} px wide at onset vs ${boldInk.span})`);
+
 rmSync(work, { recursive: true, force: true });
 
 // ---- non-Latin scripts -------------------------------------------------------

@@ -22,13 +22,23 @@ import {
 
 export type CaptionWord = { text: string; start: number; end: number };
 
-export type CaptionStyleId = 'bold' | 'pop' | 'clean';
+export type CaptionStyleId = 'bold' | 'pop' | 'reveal' | 'single' | 'clean';
 
 export const CAPTION_STYLES: { id: CaptionStyleId; name: string; desc: string }[] = [
-  { id: 'bold', name: 'Bold', desc: 'White, heavy outline, the active word in yellow' },
-  { id: 'pop', name: 'Pop', desc: 'White with the active word in hot pink' },
+  { id: 'bold', name: 'Bold', desc: 'Heavy outline, the spoken word pops in yellow' },
+  { id: 'pop', name: 'Pop', desc: 'The spoken word pops in hot pink' },
+  { id: 'reveal', name: 'Reveal', desc: 'Words appear as they are spoken' },
+  { id: 'single', name: 'One word', desc: 'One big word at a time' },
   { id: 'clean', name: 'Clean', desc: 'Plain white on a soft dark box' },
 ];
+
+/**
+ * The spoken word's entrance: drawn 18% larger and settling to full size over
+ * 140 ms, the "pop" short-form captions use. Applied at the start of the
+ * word's own event, so it replays for every word.
+ */
+const POP_IN = '\\fscx118\\fscy118\\t(0,140,\\fscx100\\fscy100)';
+const POP_RESET = '\\fscx100\\fscy100';
 
 /** A word with the face that draws it (scripts.ts). */
 export type TaggedWord = CaptionWord & { font: FontKey };
@@ -168,7 +178,7 @@ export function buildAss(
   // BorderStyle 3 draws an opaque box behind the text; 1 draws an outline.
   const borderStyle = clean ? 3 : 1;
   const outlineColour = clean ? BOX : BLACK;
-  const highlight = style === 'bold' ? YELLOW_BGR : style === 'pop' ? PINK_BGR : null;
+  const highlight = style === 'bold' ? YELLOW_BGR : style === 'pop' ? PINK_BGR : style === 'reveal' ? YELLOW_BGR : null;
 
   const header = [
     '[Script Info]',
@@ -187,21 +197,42 @@ export function buildAss(
   ];
 
   const events: string[] = [];
+  const dialogue = (start: number, end: number, text: string) =>
+    events.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Caption,,0,0,0,,${text}`);
+
+  if (style === 'single') {
+    // One word on screen at a time, half again as large, each popping in.
+    const tagged = tagWords(words);
+    const big = Math.round(fontSize * 1.5);
+    tagged.forEach((x, i) => {
+      const next = tagged[i + 1];
+      // Hold until the next word unless there is a real pause.
+      const end = next && next.start - x.end < PAUSE_BREAK ? next.start : x.end + 0.3;
+      if (end <= x.start) return;
+      dialogue(x.start, end, `{\\fs${big}${POP_IN}\\fn${FONTS[x.font].family}}${assText(x.text.toUpperCase())}`);
+    });
+    return [...header, ...events, ''].join('\n');
+  }
+
   for (const g of groupWords(words, ratio)) {
     // Each word names its face, so a line can mix scripts (see scripts.ts).
     const texts = g.words.map((x) => `{\\fn${FONTS[x.font].family}}${assText(x.text.toUpperCase())}`);
     if (!highlight) {
-      events.push(`Dialogue: 0,${assTime(g.start)},${assTime(g.end)},Caption,,0,0,0,,${joinWords(g.words, (_, i) => texts[i])}`);
+      dialogue(g.start, g.end, joinWords(g.words, (_, i) => texts[i]));
       continue;
     }
     g.words.forEach((word, i) => {
       const start = i === 0 ? g.start : word.start;
       const end = i < g.words.length - 1 ? g.words[i + 1].start : g.end;
       if (end <= start) return;
-      const line = joinWords(g.words, (_, j) =>
-        j === i ? `{\\c&H${highlight}&}${texts[j]}{\\c&H${WHITE_BGR}&}` : texts[j],
-      );
-      events.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Caption,,0,0,0,,${line}`);
+      const line = joinWords(g.words, (_, j) => {
+        if (j === i) return `{\\c&H${highlight}&${POP_IN}}${texts[j]}{\\c&H${WHITE_BGR}&${POP_RESET}}`;
+        // Reveal: words not yet spoken keep their place but are invisible, so
+        // the line does not shift as it fills in.
+        if (style === 'reveal' && j > i) return `{\\alpha&HFF&}${texts[j]}{\\alpha&H00&}`;
+        return texts[j];
+      });
+      dialogue(start, end, line);
     });
   }
   return [...header, ...events, ''].join('\n');

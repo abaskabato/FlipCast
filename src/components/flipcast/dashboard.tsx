@@ -19,6 +19,9 @@ import {
   Focus as FocusIcon,
   ArrowRight,
   RefreshCw,
+  Link2,
+  Scissors,
+  Wand2,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -26,12 +29,21 @@ import { useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
 import FocusPicker from './focus-picker';
 import ShareActions from './share-actions';
-import { renderToRatios, RenderAbortedError, type RenderedOutput } from '@/lib/video/ffmpeg-client';
+import {
+  renderToRatios,
+  RenderAbortedError,
+  transcribeSource,
+  type RenderedOutput,
+  type Trim,
+} from '@/lib/video/ffmpeg-client';
 import { detectSubject, TrackingUnavailableError } from '@/lib/video/subject-detect';
 import { smoothPath, type SubjectPath } from '@/lib/video/tracking';
-import { planSplit, type SplitLayout } from '@/lib/video/layout';
+import { importFromLink } from '@/lib/import/client';
+import { CLIP_LENGTHS, toLines, type ClipLength, type ClipSuggestion } from '@/lib/clips/lines';
+import type { CaptionWord } from '@/lib/captions/captions';
+import { isWholeClip, planSplitSegments, type SplitSegment } from '@/lib/video/layout';
 import { CAPTION_STYLES, type CaptionStyleId } from '@/lib/captions/captions';
-import { transcribe } from '@/lib/captions/transcribe';
+import { transcribe, type CaptionModel } from '@/lib/captions/transcribe';
 import {
   CENTER_FOCUS,
   outputCanvas,
@@ -90,10 +102,16 @@ function CaptionSwatch({ style }: { style: CaptionStyleId }) {
     >
       {style === 'clean' ? (
         <span className={`${base} rounded-md bg-black/50 px-2 text-white`}>Flip it</span>
+      ) : style === 'single' ? (
+        <span className={`${base} !text-2xl text-white`} style={outline}>
+          Flip
+        </span>
       ) : (
         <span className={base} style={outline}>
           <span className="text-white">Flip </span>
-          <span className={style === 'bold' ? 'text-yellow-300' : 'text-pink-500'}>it</span>
+          <span className={style === 'pop' ? 'text-pink-500' : 'text-yellow-300'}>it</span>
+          {/* Reveal: the next word is not on screen yet. */}
+          <span className={style === 'reveal' ? 'text-white/15' : 'text-white'}> now</span>
         </span>
       )}
     </span>
@@ -150,6 +168,16 @@ export default function FlipcastDashboard() {
   const [splitOn, setSplitOn] = useState(true);
   const [captionsOn, setCaptionsOn] = useState(false);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyleId>('bold');
+  const [captionModel, setCaptionModel] = useState<CaptionModel>('fast');
+
+  // AI clip finding: the transcript is made on this device and kept per file,
+  // so captions for a chosen clip reuse it instead of transcribing again.
+  const [clipLength, setClipLength] = useState<ClipLength>('medium');
+  const [clipWords, setClipWords] = useState<CaptionWord[] | null>(null);
+  const [suggestions, setSuggestions] = useState<ClipSuggestion[] | null>(null);
+  const [clipPhase, setClipPhase] = useState<{ label: string; progress: number } | null>(null);
+  const [clipError, setClipError] = useState<string | null>(null);
+  const [trim, setTrim] = useState<Trim | null>(null);
   const [srt, setSrt] = useState<string | null>(null);
 
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -292,6 +320,10 @@ export default function FlipcastDashboard() {
       setError(null);
       setNotice(null);
       setOutputs([]);
+      setClipWords(null);
+      setSuggestions(null);
+      setClipError(null);
+      setTrim(null);
       if (!next) {
         setFile(null);
         setMeta(null);
@@ -343,9 +375,11 @@ export default function FlipcastDashboard() {
       setError('Pick at least one output format.');
       return;
     }
-    if (usage && meta.durationSeconds > usage.remainingSeconds) {
+    // A chosen clip is what gets rendered, so it is what counts.
+    const renderSeconds = trim ? trim.end - trim.start : meta.durationSeconds;
+    if (usage && renderSeconds > usage.remainingSeconds) {
       setError(
-        `Not enough quota left. This clip needs ${formatDuration(meta.durationSeconds)}; you have ${formatQuota(usage.remainingSeconds)}.`,
+        `Not enough quota left. This clip needs ${formatDuration(renderSeconds)}; you have ${formatQuota(usage.remainingSeconds)}.`,
       );
       return;
     }
@@ -370,7 +404,7 @@ export default function FlipcastDashboard() {
           fileName: file.name,
           targets,
           mode: trackingMode,
-          sourceDurationSeconds: meta.durationSeconds,
+          sourceDurationSeconds: trim ? trim.end - trim.start : meta.durationSeconds,
           sourceWidth: meta.width,
           sourceHeight: meta.height,
           sourceSizeBytes: file.size,
@@ -398,13 +432,14 @@ export default function FlipcastDashboard() {
       // Auto-track: find the subject first, then render with a moving crop.
       // Takes the first 15% of the bar. Any failure falls back to centred.
       let track: SubjectPath | null = null;
-      let split: SplitLayout | null = null;
+      let split: SplitSegment[] = [];
       const trackShare = trackingMode === 'smart_face' ? 0.15 : 0;
       if (trackingMode === 'smart_face') {
         setPhase('Finding the speaker…');
         try {
           const samples = await detectSubject(file, meta.durationSeconds, {
             signal: controller.signal,
+            range: trim,
             onProgress: (f) => {
               setProgress(f * trackShare);
               setPhase(`Finding the speaker · ${Math.round(f * 100)}%`);
@@ -413,8 +448,14 @@ export default function FlipcastDashboard() {
           track = smoothPath(samples);
           if (!track) notes.push('No face was found, so the clip was framed from the centre.');
           if (splitOn && targets.includes('9:16')) {
-            split = planSplit(samples, meta.width, meta.height);
-            if (split) notes.push('Two people were on camera together, so the 9:16 cut uses split screen.');
+            split = planSplitSegments(samples, meta.width, meta.height);
+            if (isWholeClip(split)) {
+              notes.push('Two people were on camera together, so the 9:16 cut uses split screen.');
+            } else if (split.length) {
+              notes.push(
+                `The 9:16 cut switches to split screen ${split.length === 1 ? 'once' : `${split.length} times`}, while both people are on camera.`,
+              );
+            }
           }
         } catch (e) {
           if (controller.signal.aborted) throw new RenderAbortedError();
@@ -428,6 +469,9 @@ export default function FlipcastDashboard() {
 
       const result = await renderToRatios(file, targets, {
         signal: controller.signal,
+        trim,
+        // Clip finding already transcribed this file; captions reuse it.
+        captionWords: clipWords,
         // Manual crop moves the window to a fixed point; auto-track moves it
         // over time; otherwise framing stays centred.
         focus: trackingMode === 'manual_crop' ? focus : null,
@@ -442,6 +486,7 @@ export default function FlipcastDashboard() {
               transcribe: (pcm, report) =>
                 transcribe(pcm, {
                   signal: controller.signal,
+                  model: captionModel,
                   onProgress: (p) =>
                     p.stage === 'download'
                       ? report(
@@ -512,6 +557,9 @@ export default function FlipcastDashboard() {
     splitOn,
     captionsOn,
     captionStyle,
+    captionModel,
+    trim,
+    clipWords,
     usage,
     loadUsage,
     focusAccount,
@@ -601,6 +649,75 @@ export default function FlipcastDashboard() {
     }
   }, [acceptFile]);
 
+  /** Import from a pasted link (lib/import/client.ts). */
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkProgress, setLinkProgress] = useState<number | null>(null);
+  const loadFromLink = useCallback(async () => {
+    setError(null);
+    setLinkProgress(0);
+    try {
+      const imported = await importFromLink(linkUrl, {
+        maxBytes: MAX_FILE_BYTES,
+        onProgress: (loaded, total) => setLinkProgress(total ? loaded / total : 0),
+      });
+      setLinkUrl('');
+      await acceptFile(imported);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not import that link.');
+    } finally {
+      setLinkProgress(null);
+    }
+  }, [linkUrl, acceptFile]);
+
+  /** Transcribe on this device, then ask the AI for stand-alone clips. */
+  const findClipsNow = useCallback(async () => {
+    if (!signedIn) {
+      focusAccount();
+      return;
+    }
+    if (!file || !meta) return;
+    setClipError(null);
+    setSuggestions(null);
+    try {
+      let words = clipWords;
+      if (!words) {
+        setClipPhase({ label: 'Listening to the audio…', progress: 0 });
+        words = await transcribeSource(
+          file,
+          (pcm, report) =>
+            transcribe(pcm, {
+              model: captionModel,
+              onProgress: (p) =>
+                p.stage === 'download'
+                  ? report(
+                      p.fraction * 0.3,
+                      `Getting the speech model ready (one time) · ${formatBytes(p.loadedBytes)} of ${formatBytes(p.totalBytes)}`,
+                    )
+                  : report(0.3 + p.fraction * 0.7, `Transcribing on your device · ${Math.round(p.fraction * 100)}%`),
+            }),
+          (f, label) => setClipPhase({ label, progress: f * 0.85 }),
+        );
+        if (!words) throw new Error('This video has no audio track, so there is nothing to find clips in.');
+        setClipWords(words);
+      }
+      const lines = toLines(words);
+      if (lines.length < 3) throw new Error('Not enough speech was found to pick clips from.');
+      setClipPhase({ label: 'Picking the best moments…', progress: 0.9 });
+      const res = await fetch('/api/clips', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ length: clipLength, lines }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? 'Could not find clips right now.');
+      setSuggestions(body.clips ?? []);
+    } catch (e) {
+      setClipError(e instanceof Error ? e.message : 'Could not find clips right now.');
+    } finally {
+      setClipPhase(null);
+    }
+  }, [signedIn, focusAccount, file, meta, clipWords, captionModel, clipLength]);
+
   /** From the landing CTAs: bring the studio into view and open the picker. */
   const startFromCta = () => {
     document.getElementById('studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -611,6 +728,10 @@ export default function FlipcastDashboard() {
     setFile(null);
     setMeta(null);
     setOutputs([]);
+    setClipWords(null);
+    setSuggestions(null);
+    setClipError(null);
+    setTrim(null);
     setSrt(null);
     setProgress(0);
     setPhase('');
@@ -750,6 +871,12 @@ export default function FlipcastDashboard() {
                 <p className="mt-1 truncate text-base font-semibold text-white" title={file.name}>
                   {file.name}
                 </p>
+                {trim && (
+                  <p className="fc-chip-accent mt-2 w-fit font-mono">
+                    <Scissors className="h-3.5 w-3.5" />
+                    Clip {formatDuration(trim.start)}–{formatDuration(trim.end)}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="fc-chip font-mono">
@@ -843,6 +970,47 @@ export default function FlipcastDashboard() {
         </div>
       )}
 
+      {!file && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void loadFromLink();
+          }}
+          className="flex flex-col gap-2 sm:flex-row"
+        >
+          <label htmlFor="video-link" className="sr-only">
+            Video link
+          </label>
+          <div className="relative flex-1">
+            <Link2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <input
+              id="video-link"
+              type="url"
+              inputMode="url"
+              placeholder="Or paste a Dropbox, Google Drive or direct video link"
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              disabled={linkProgress !== null || isRendering}
+              className="min-h-[44px] w-full rounded-full border border-white/10 bg-white/[0.04] pl-10 pr-4 text-sm text-white placeholder:text-zinc-500 focus:border-pink-400/60 focus:outline-none disabled:opacity-60"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!linkUrl.trim() || linkProgress !== null || isRendering}
+            className="fc-btn-secondary shrink-0"
+          >
+            {linkProgress !== null ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {linkProgress > 0 ? `${Math.round(linkProgress * 100)}%` : 'Fetching…'}
+              </>
+            ) : (
+              'Import'
+            )}
+          </button>
+        </form>
+      )}
+
       {error && (
         <div className="fc-notice-error" role="alert">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -854,6 +1022,118 @@ export default function FlipcastDashboard() {
         <div className="fc-notice-warn" role="status">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{notice}</span>
+        </div>
+      )}
+
+      {/* AI clip finding: for longer videos, pick the moments worth posting. */}
+      {file && meta && meta.durationSeconds >= 60 && (
+        <div className="fc-card space-y-4 p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="fc-heading flex items-center gap-2">
+                <Wand2 className="h-5 w-5 text-pink-400" />
+                Find the best clips
+                <span className="fc-chip-accent !py-0.5">AI</span>
+              </h2>
+              <p className="fc-body mt-1 max-w-xl">
+                Picks the moments that work on their own. Speech is transcribed on this device;
+                only the transcript text is sent to our AI. Your video never leaves it.
+              </p>
+            </div>
+            <div
+              role="radiogroup"
+              aria-label="Clip length"
+              className="inline-flex rounded-full border border-white/10 bg-white/[0.04] p-1"
+            >
+              {(Object.keys(CLIP_LENGTHS) as ClipLength[]).map((k) => (
+                <button
+                  key={k}
+                  role="radio"
+                  aria-checked={clipLength === k}
+                  onClick={() => setClipLength(k)}
+                  disabled={clipPhase !== null || isRendering}
+                  className={`min-h-[36px] rounded-full px-3 text-xs font-semibold transition-colors disabled:opacity-50 ${
+                    clipLength === k ? 'bg-white/[0.12] text-white' : 'text-zinc-400 hover:text-zinc-100'
+                  }`}
+                >
+                  {CLIP_LENGTHS[k].label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {clipPhase ? (
+            <div className="space-y-2">
+              <p className="flex items-center gap-2 text-sm text-zinc-200">
+                <Loader2 className="h-4 w-4 animate-spin text-pink-400" />
+                {clipPhase.label}
+              </p>
+              <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
+                <div className="fc-gradient h-full transition-all" style={{ width: `${Math.round(clipPhase.progress * 100)}%` }} />
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => void findClipsNow()} disabled={isRendering} className="fc-btn-primary">
+              <Wand2 className="h-4 w-4" />
+              {signedIn ? (suggestions ? 'Find clips again' : 'Find clips') : 'Sign in to find clips'}
+            </button>
+          )}
+
+          {clipError && (
+            <div className="fc-notice-error" role="alert">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{clipError}</span>
+            </div>
+          )}
+
+          {suggestions && suggestions.length === 0 && (
+            <p className="fc-body">No stand-alone moments stood out. Try a different clip length.</p>
+          )}
+
+          {suggestions && suggestions.length > 0 && (
+            <ul className="space-y-2">
+              {suggestions.map((c) => {
+                const chosen = trim?.start === c.start && trim?.end === c.end;
+                return (
+                  <li
+                    key={`${c.start}-${c.end}`}
+                    className={`rounded-2xl border p-4 transition-colors ${
+                      chosen ? 'border-pink-400/70 bg-pink-500/[0.08]' : 'border-white/[0.07] bg-white/[0.02]'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-white">{c.title}</p>
+                        <p className="fc-meta mt-0.5 font-mono">
+                          {formatDuration(c.start)}–{formatDuration(c.end)} · {Math.round(c.end - c.start)} s
+                        </p>
+                      </div>
+                      <span className="fc-chip-accent shrink-0">{c.score}/100</span>
+                    </div>
+                    {c.hook && <p className="mt-2 text-sm italic text-zinc-300">“{c.hook}”</p>}
+                    {c.reason && <p className="fc-meta mt-1">{c.reason}</p>}
+                    <button
+                      onClick={() => setTrim(chosen ? null : { start: c.start, end: c.end })}
+                      disabled={isRendering}
+                      className={`mt-3 ${chosen ? 'fc-btn-secondary' : 'fc-btn-primary'} !min-h-[40px]`}
+                    >
+                      {chosen ? (
+                        <>
+                          <Check className="h-4 w-4" />
+                          Selected · use whole video instead
+                        </>
+                      ) : (
+                        <>
+                          <Scissors className="h-4 w-4" />
+                          Use this clip
+                        </>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
 
@@ -970,8 +1250,9 @@ export default function FlipcastDashboard() {
               <span>
                 <span className="block text-sm font-semibold text-white">Split screen for two speakers</span>
                 <span className="fc-meta mt-0.5 block !text-zinc-400">
-                  When two people are on camera together, the 9:16 cut stacks them top and
-                  bottom so neither gets cropped out. Ideal for podcasts and interviews.
+                  Whenever two people are on camera together, the 9:16 cut stacks them top and
+                  bottom so neither gets cropped out, and switches back when it cuts to one.
+                  Ideal for podcasts and interviews.
                 </span>
               </span>
             </label>
@@ -1001,8 +1282,8 @@ export default function FlipcastDashboard() {
                 <span className="fc-chip-accent !py-0.5">Free</span>
               </StepHeading>
               <p className="fc-body mt-2">
-                Word-by-word captions burned into every format, plus an .srt file. Transcribed on
-                your device; the speech model downloads once (about 77 MB).
+                Word-by-word captions in dozens of languages, burned into every format, plus an
+                .srt file. Transcribed on your device; the speech model downloads once.
               </p>
             </div>
             <button
@@ -1024,7 +1305,36 @@ export default function FlipcastDashboard() {
           </div>
 
           {captionsOn && (
-            <div className="grid grid-cols-3 gap-2">
+            <div
+              role="radiogroup"
+              aria-label="Caption accuracy"
+              className="grid grid-cols-2 gap-2 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-1"
+            >
+              {(
+                [
+                  { id: 'fast', name: 'Fast', desc: '77 MB download, quick' },
+                  { id: 'accurate', name: 'High accuracy', desc: '249 MB download, slower' },
+                ] as const
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  role="radio"
+                  aria-checked={captionModel === m.id}
+                  onClick={() => setCaptionModel(m.id)}
+                  disabled={isRendering}
+                  className={`rounded-xl px-3 py-2 text-left transition-colors disabled:opacity-50 ${
+                    captionModel === m.id ? 'bg-white/[0.1]' : 'hover:bg-white/[0.04]'
+                  }`}
+                >
+                  <span className="block text-sm font-semibold text-white">{m.name}</span>
+                  <span className="fc-meta block">{m.desc}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {captionsOn && (
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
               {CAPTION_STYLES.map((st) => (
                 <button
                   key={st.id}

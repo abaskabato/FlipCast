@@ -248,7 +248,12 @@ function pickSubject(faces: Box[], prev: { x: number; y: number } | null): Box |
 export async function detectSubject(
   file: File,
   duration: number,
-  opts: { signal?: AbortSignal; onProgress?: (fraction: number) => void } = {},
+  opts: {
+    signal?: AbortSignal;
+    onProgress?: (fraction: number) => void;
+    /** Only look at this stretch; sample times come back relative to its start. */
+    range?: { start: number; end: number } | null;
+  } = {},
 ): Promise<SubjectSample[]> {
   const [detector, people, { video, release }] = await Promise.all([
     getDetector(),
@@ -265,7 +270,10 @@ export async function detectSubject(
     tile.width = TILE_SIZE;
     tile.height = TILE_SIZE;
 
-    const times = sampleTimes(Math.min(duration, video.duration || duration));
+    const full = Math.min(duration, video.duration || duration);
+    const from = opts.range ? Math.max(0, Math.min(full, opts.range.start)) : 0;
+    const to = opts.range ? Math.max(from, Math.min(full, opts.range.end)) : full;
+    const times = sampleTimes(to - from).map((t) => t + from);
     const samples: SubjectSample[] = [];
     let prev: { x: number; y: number } | null = null;
 
@@ -282,9 +290,9 @@ export async function detectSubject(
         // Centre on the eyes rather than the middle of the box, which keeps
         // natural headroom when the crop also moves vertically.
         prev = { x: subject.x + subject.w / 2, y: subject.y + subject.h * 0.45 };
-        samples.push({ t: times[i], ...prev, faces });
+        samples.push({ t: times[i] - from, ...prev, faces });
       } else {
-        samples.push({ t: times[i], x: null, y: null, faces });
+        samples.push({ t: times[i] - from, x: null, y: null, faces });
       }
       opts.onProgress?.((i + 1) / times.length);
     }

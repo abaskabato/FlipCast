@@ -1,7 +1,9 @@
 'use client';
 
 import type { CaptionWord } from './captions';
-import type { WorkerMessage } from './transcribe.worker';
+import type { CaptionModel, WorkerMessage } from './transcribe.worker';
+
+export type { CaptionModel };
 
 export type TranscribeProgress =
   | { stage: 'download'; fraction: number; loadedBytes: number; totalBytes: number }
@@ -15,7 +17,7 @@ export type TranscribeProgress =
  */
 export function transcribe(
   audio: Float32Array,
-  opts: { signal?: AbortSignal; onProgress?: (p: TranscribeProgress) => void } = {},
+  opts: { signal?: AbortSignal; onProgress?: (p: TranscribeProgress) => void; model?: CaptionModel } = {},
 ): Promise<CaptionWord[]> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./transcribe.worker.ts', import.meta.url), { type: 'module' });
@@ -53,6 +55,6 @@ export function transcribe(
       reject(new Error(e.message || 'The transcription worker failed to start.'));
     };
     // Transfer, not copy: the PCM for a long clip is tens of megabytes.
-    worker.postMessage({ audio }, [audio.buffer]);
+    worker.postMessage({ audio, model: opts.model ?? 'fast' }, [audio.buffer]);
   });
 }
