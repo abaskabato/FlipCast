@@ -8,6 +8,7 @@ import {
 } from '@daveyplate/better-auth-ui';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth-client';
+import { useFeatures } from '@/lib/features-client';
 import { formatQuota, TIER_LIMITS } from '@/lib/quotas';
 
 /**
@@ -23,6 +24,7 @@ const AUTH_LOCALIZATION = authLocalization as unknown as Record<string, unknown>
  */
 export function AuthPanel({ onSignedIn }: { onSignedIn?: () => void }) {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const features = useFeatures();
 
   return (
     <AuthUIProvider
@@ -30,9 +32,8 @@ export function AuthPanel({ onSignedIn }: { onSignedIn?: () => void }) {
       emailVerification={false}
       account={false}
       deleteUser={false}
-      // No reset page or email provider is deployed yet, so the library's
-      // "Forgot password?" link would lead to a 404. Re-enable once both exist.
-      credentials={{ forgotPassword: false }}
+      // Offered only when reset emails can actually be delivered (RESEND_API_KEY).
+      credentials={{ forgotPassword: features.email }}
       onSessionChange={() => {
         onSignedIn?.();
       }}

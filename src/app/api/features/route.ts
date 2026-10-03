@@ -10,5 +10,10 @@ export const runtime = 'nodejs';
  * only offers (and advertises) what actually works. Public; no secrets.
  */
 export function GET() {
-  return NextResponse.json({ clips: clipFindingEnabled(), ...socialConfig() });
+  return NextResponse.json({
+    clips: clipFindingEnabled(),
+    // Password reset needs a way to deliver the link.
+    email: Boolean(process.env.RESEND_API_KEY?.trim()),
+    ...socialConfig(),
+  });
 }

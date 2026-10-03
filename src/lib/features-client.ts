@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 
-export type Features = { clips: boolean; youtube: boolean; tiktok: boolean; tiktokScheduling: boolean };
+export type Features = { clips: boolean; email: boolean; youtube: boolean; tiktok: boolean; tiktokScheduling: boolean };
 
-const OFF: Features = { clips: false, youtube: false, tiktok: false, tiktokScheduling: false };
+const OFF: Features = { clips: false, email: false, youtube: false, tiktok: false, tiktokScheduling: false };
 let pending: Promise<Features> | null = null;
 
 /** Which optional features are live (/api/features), fetched once per page. Off until known. */
