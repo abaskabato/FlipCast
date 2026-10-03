@@ -10,13 +10,14 @@
  *
  * Run: npm run verify:captions
  */
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
 
-import { buildAss, buildSrt, groupWords } from '../src/lib/captions/captions.ts';
+import { buildAss, buildSrt, captionFonts, groupWords, tagWords } from '../src/lib/captions/captions.ts';
+import { FONTS, hanFontFor } from '../src/lib/captions/scripts.ts';
 
 const work = mkdtempSync(path.join(tmpdir(), 'flipcast-captions-'));
 const fontsDir = path.resolve(import.meta.dirname, '..', 'public', 'fonts');
@@ -80,5 +81,116 @@ const empty = buildAss([], '9:16', CANVAS['9:16'], 'bold');
 check(empty.includes('[Events]') && !empty.includes('Dialogue:'), 'no words -> valid script with no captions');
 
 rmSync(work, { recursive: true, force: true });
+
+// ---- non-Latin scripts -------------------------------------------------------
+
+/** Every code point a TrueType font maps (cmap formats 4 and 12). */
+function cmapOf(file) {
+  const b = readFileSync(file);
+  let cmap = 0;
+  for (let i = 0, n = b.readUInt16BE(4); i < n; i++) {
+    if (b.toString('ascii', 12 + i * 16, 16 + i * 16) === 'cmap') cmap = b.readUInt32BE(20 + i * 16);
+  }
+  const cps = new Set();
+  for (let i = 0, n = b.readUInt16BE(cmap + 2); i < n; i++) {
+    const off = cmap + b.readUInt32BE(cmap + 4 + i * 8 + 4);
+    const format = b.readUInt16BE(off);
+    if (format === 4) {
+      const segs = b.readUInt16BE(off + 6) / 2;
+      for (let k = 0; k < segs; k++) {
+        const end = b.readUInt16BE(off + 14 + k * 2);
+        const start = b.readUInt16BE(off + 16 + segs * 2 + k * 2);
+        for (let c = start; c <= end && c !== 0xffff; c++) cps.add(c);
+      }
+    } else if (format === 12) {
+      for (let k = 0, groups = b.readUInt32BE(off + 12); k < groups; k++) {
+        const g = off + 16 + k * 12;
+        for (let c = b.readUInt32BE(g); c <= b.readUInt32BE(g + 4); c++) cps.add(c);
+      }
+    }
+  }
+  return cps;
+}
+const cmaps = new Map();
+const covers = (font, text) => {
+  if (!cmaps.has(font.file)) cmaps.set(font.file, cmapOf(path.join(fontsDir, font.file)));
+  const cps = cmaps.get(font.file);
+  return [...text].filter((ch) => !/\s/u.test(ch) && !cps.has(ch.codePointAt(0)));
+};
+
+const words = (list) => list.map((text, i) => ({ text, start: 0.2 + i * 0.4, end: 0.55 + i * 0.4 }));
+const SAMPLES = {
+  ja: ['今日は', 'いい', '天気', 'ですね。'],
+  'zh-Hans': ['我们', '今天', '学习', '中文。'],
+  'zh-Hant': ['我們', '今天', '學習', '中文。'],
+  ko: ['안녕하세요', '만나서', '반갑습니다.'],
+  ar: ['مرحبا', 'بكم', 'في', 'البرنامج.'],
+  he: ['שלום', 'לכולם', 'היום.'],
+  hi: ['नमस्ते', 'आप', 'कैसे', 'हैं।'],
+  bn: ['আমি', 'বাংলায়', 'কথা', 'বলি।'],
+  ta: ['வணக்கம்', 'நண்பர்களே.'],
+  te: ['నమస్కారం', 'మిత్రులారా.'],
+  kn: ['ನಮಸ್ಕಾರ', 'ಸ್ನೇಹಿತರೇ.'],
+  ml: ['നമസ്കാരം', 'സുഹൃത്തുക്കളേ.'],
+  gu: ['નમસ્તે', 'મિત્રો.'],
+  pa: ['ਸਤ', 'ਸ੍ਰੀ', 'ਅਕਾਲ'],
+  si: ['ආයුබෝවන්', 'මිතුරනි.'],
+  th: ['สวัสดี', 'ครับ', 'ทุก', 'คน'],
+  lo: ['ສະບາຍດີ', 'ໝູ່'],
+  km: ['សួស្តី', 'មិត្ត'],
+  my: ['မင်္ဂလာပါ', 'သူငယ်ချင်း'],
+  ru: ['Привет,', 'как', 'дела?'],
+  uk: ['Їжак', 'ґанок', 'є.'],
+  el: ['Καλημέρα', 'σε', 'όλους.'],
+  ka: ['გამარჯობა', 'მეგობრებო.'],
+  hy: ['Բարև', 'ձեզ.'],
+  am: ['ሰላም', 'ለሁሉም።'],
+  vi: ['Xin', 'chào', 'các', 'bạn', 'nhé.'],
+  'hi+en': ['मैं', 'iPhone', 'use', 'करता', 'हूँ।'],
+};
+
+// Every character, as burned in (upper-cased), exists in the face chosen for it.
+for (const [lang, list] of Object.entries(SAMPLES)) {
+  const missing = tagWords(words(list)).flatMap((w) => covers(FONTS[w.font], w.text.toUpperCase()));
+  const faces = [...new Set(tagWords(words(list)).map((w) => FONTS[w.font].family))].join(' + ');
+  check(missing.length === 0, `${lang.padEnd(7)} every glyph present in ${faces}${missing.length ? ` (missing ${missing.join('')})` : ''}`);
+}
+
+check(hanFontFor('今日はいい天気') === 'ja', 'Han with kana -> Japanese face');
+check(hanFontFor('我們今天學習') === 'hant', 'Traditional characters -> Traditional Chinese face');
+check(hanFontFor('我们今天学习') === 'hans', 'Simplified characters -> Simplified Chinese face');
+
+const jaSrt = buildSrt(words(SAMPLES.ja));
+check(jaSrt.includes('今日はいい天気ですね。'), 'Japanese is joined without spaces');
+check(buildSrt(words(SAMPLES['zh-Hans'])).includes('我们今天学习中文。'), 'Chinese is joined without spaces');
+check(buildSrt(words(SAMPLES['hi+en'])).includes('मैं iPhone use करता हूँ।'), 'Hindi + English keep their spaces');
+
+const longZh = words(Array.from('我们今天一起学习怎么把一个视频变成适合每个平台的短视频格式'));
+const zhLines = groupWords(longZh, '9:16').map((g) => g.words.map((w) => w.text).join(''));
+check(zhLines.length > 1 && zhLines.every((l) => l.length <= 8), `Chinese 9:16 lines fit the frame (${zhLines.map((l) => l.length).join(', ')} chars)`);
+
+const needed = captionFonts(words(SAMPLES['hi+en'])).map((f) => f.family);
+check(needed.includes('Anton') && needed.includes('Noto Sans Devanagari ExtraBold') && needed.length === 2,
+  'only the faces a transcript needs are fetched');
+
+// Real libass, with faces laid out flat as the engine does: no glyph may fall
+// back to another font (libass logs "Glyph ... not found" when one does).
+const langWork = mkdtempSync(path.join(tmpdir(), 'flipcast-captions-lang-'));
+const flat = path.join(langWork, 'fonts');
+mkdirSync(flat);
+for (const f of Object.values(FONTS)) copyFileSync(path.join(fontsDir, f.file), path.join(flat, path.basename(f.file)));
+for (const [lang, list] of Object.entries(SAMPLES)) {
+  const ass = path.join(langWork, `lang-${lang}.ass`);
+  writeFileSync(ass, buildAss(words(list), '9:16', { w: 720, h: 1280 }, 'bold'));
+  const run = spawnSync(ffmpegPath, [
+    '-v', 'verbose', '-f', 'lavfi', '-i', 'color=0x404040:s=720x1280:d=1:r=25',
+    '-vf', `subtitles=filename=${ass}:fontsdir=${flat}`, '-frames:v', '1', '-f', 'null', '-',
+  ], { encoding: 'utf8' });
+  const log = run.stderr ?? '';
+  const misses = log.split('\n').filter((l) => /not found|fontselect.*fallback|Error opening font/i.test(l));
+  check(run.status === 0 && misses.length === 0, `${lang.padEnd(7)} libass draws it with no font fallback${misses.length ? `: ${misses[0].trim()}` : ''}`);
+}
+rmSync(langWork, { recursive: true, force: true });
+
 console.log(fail ? `\nCAPTIONS: ${fail} FAILED` : '\nCAPTIONS: ALL PASS');
 process.exit(fail ? 1 : 0);

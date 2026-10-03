@@ -9,6 +9,16 @@
  */
 
 import type { Ratio } from '../video/geometry';
+import {
+  FONTS,
+  SENTENCE_END,
+  displayWidth,
+  fontFor,
+  hanFontFor,
+  spaced,
+  type CaptionFont,
+  type FontKey,
+} from './scripts';
 
 export type CaptionWord = { text: string; start: number; end: number };
 
@@ -20,14 +30,13 @@ export const CAPTION_STYLES: { id: CaptionStyleId; name: string; desc: string }[
   { id: 'clean', name: 'Clean', desc: 'Plain white on a soft dark box' },
 ];
 
-/** Font family name inside the bundled TTF (public/fonts/Anton-Regular.ttf). */
-export const CAPTION_FONT_FAMILY = 'Anton';
-export const CAPTION_FONT_FILE = 'Anton-Regular.ttf';
+/** A word with the face that draws it (scripts.ts). */
+export type TaggedWord = CaptionWord & { font: FontKey };
 
 /** A line shown on screen at once. */
-export type CaptionGroup = { words: CaptionWord[]; start: number; end: number };
+export type CaptionGroup = { words: TaggedWord[]; start: number; end: number };
 
-/** Longest line, in characters, per output shape. Vertical frames are narrow. */
+/** Longest line, in Anton-letter widths (scripts.displayWidth), per shape. */
 const MAX_CHARS: Record<Ratio, number> = { '9:16': 16, '1:1': 22, '16:9': 34 };
 const MAX_WORDS: Record<Ratio, number> = { '9:16': 3, '1:1': 4, '16:9': 7 };
 /** A pause this long (seconds) always starts a new line. */
@@ -41,26 +50,52 @@ export function normalizeWords(words: CaptionWord[]): CaptionWord[] {
     .sort((a, b) => a.start - b.start);
 }
 
+/** Normalised words, each tagged with the face for its script. */
+export function tagWords(words: CaptionWord[]): TaggedWord[] {
+  const clean = normalizeWords(words);
+  const han = hanFontFor(clean.map((w) => w.text).join(''));
+  return clean.map((w) => ({ ...w, font: fontFor(w.text, han) }));
+}
+
+/** Every face a transcript needs, Anton first. Fetch these before rendering. */
+export function captionFonts(words: CaptionWord[]): CaptionFont[] {
+  const keys = new Set<FontKey>(['latin', ...tagWords(words).map((w) => w.font)]);
+  return [...keys].map((k) => FONTS[k]);
+}
+
+/** A space between two words, unless both are in a script written without them. */
+const gap = (a: TaggedWord, b: TaggedWord) => (spaced(a.font) || spaced(b.font) ? ' ' : '');
+
+/** Join words the way their scripts are written, after mapping each with `map`. */
+function joinWords(words: TaggedWord[], map: (w: TaggedWord, i: number) => string = (w) => w.text): string {
+  return words.map((w, i) => (i ? gap(words[i - 1], w) : '') + map(w, i)).join('');
+}
+
 /** Group words into lines that fit the shape, breaking on pauses and sentence ends. */
 export function groupWords(words: CaptionWord[], ratio: Ratio): CaptionGroup[] {
   const groups: CaptionGroup[] = [];
-  let cur: CaptionWord[] = [];
+  let cur: TaggedWord[] = [];
+  let width = 0;
   const flush = () => {
     if (cur.length) groups.push({ words: cur, start: cur[0].start, end: cur[cur.length - 1].end });
     cur = [];
+    width = 0;
   };
-  for (const w of normalizeWords(words)) {
+  for (const w of tagWords(words)) {
     const prev = cur[cur.length - 1];
-    const chars = cur.reduce((n, x) => n + x.text.length + 1, 0) + w.text.length;
+    const add = (prev ? gap(prev, w).length : 0) + displayWidth(w.text, w.font);
     if (
       prev &&
-      (cur.length >= MAX_WORDS[ratio] ||
-        chars > MAX_CHARS[ratio] ||
+      // The word cap is for spaced scripts: a CJK or Thai "word" from the
+      // transcriber is often a single character, so width alone decides.
+      ((cur.length >= MAX_WORDS[ratio] && spaced(w.font)) ||
+        width + add > MAX_CHARS[ratio] ||
         w.start - prev.end > PAUSE_BREAK ||
-        /[.!?]$/.test(prev.text))
+        SENTENCE_END.test(prev.text))
     ) {
       flush();
     }
+    width += cur.length ? add : displayWidth(w.text, w.font);
     cur.push(w);
   }
   flush();
@@ -145,7 +180,7 @@ export function buildAss(
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Caption,${CAPTION_FONT_FAMILY},${fontSize},${WHITE},${WHITE},${outlineColour},${BOX},0,0,0,0,100,100,1,0,${borderStyle},${outline},${shadow},2,${marginH},${marginH},${marginV},1`,
+    `Style: Caption,${FONTS.latin.family},${fontSize},${WHITE},${WHITE},${outlineColour},${BOX},0,0,0,0,100,100,1,0,${borderStyle},${outline},${shadow},2,${marginH},${marginH},${marginV},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -153,18 +188,19 @@ export function buildAss(
 
   const events: string[] = [];
   for (const g of groupWords(words, ratio)) {
-    const texts = g.words.map((x) => assText(x.text.toUpperCase()));
+    // Each word names its face, so a line can mix scripts (see scripts.ts).
+    const texts = g.words.map((x) => `{\\fn${FONTS[x.font].family}}${assText(x.text.toUpperCase())}`);
     if (!highlight) {
-      events.push(`Dialogue: 0,${assTime(g.start)},${assTime(g.end)},Caption,,0,0,0,,${texts.join(' ')}`);
+      events.push(`Dialogue: 0,${assTime(g.start)},${assTime(g.end)},Caption,,0,0,0,,${joinWords(g.words, (_, i) => texts[i])}`);
       continue;
     }
     g.words.forEach((word, i) => {
       const start = i === 0 ? g.start : word.start;
       const end = i < g.words.length - 1 ? g.words[i + 1].start : g.end;
       if (end <= start) return;
-      const line = texts
-        .map((t, j) => (j === i ? `{\\c&H${highlight}&}${t}{\\c&H${WHITE_BGR}&}` : t))
-        .join(' ');
+      const line = joinWords(g.words, (_, j) =>
+        j === i ? `{\\c&H${highlight}&}${texts[j]}{\\c&H${WHITE_BGR}&}` : texts[j],
+      );
       events.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Caption,,0,0,0,,${line}`);
     });
   }
@@ -177,7 +213,7 @@ export function buildSrt(words: CaptionWord[]): string {
   return groupWords(words, '16:9')
     .map(
       (g, i) =>
-        `${i + 1}\n${srtTime(g.start)} --> ${srtTime(g.end)}\n${g.words.map((w) => w.text).join(' ')}\n`,
+        `${i + 1}\n${srtTime(g.start)} --> ${srtTime(g.end)}\n${joinWords(g.words)}\n`,
     )
     .join('\n');
 }

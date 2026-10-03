@@ -20,7 +20,7 @@ import { filterExpr, outputCanvas, type Focus, type Ratio } from './geometry';
 import { focusTrackFor, type FocusTrack, type SubjectPath } from './tracking';
 import { splitFilter, type SplitLayout } from './layout';
 import {
-  CAPTION_FONT_FILE,
+  captionFonts,
   buildAss,
   buildSrt,
   type CaptionStyleId,
@@ -313,7 +313,15 @@ export async function renderToRatios(
         if (!notes.length) notes.push('No speech was found, so it was rendered without captions.');
       } else {
         captions = { words, srt: buildSrt(words) };
-        await installCaptionFont(ffmpeg);
+        try {
+          await installCaptionFonts(ffmpeg, words, (label) =>
+            opts.onProgress?.({ progress: renderFrom, label }),
+          );
+        } catch (e) {
+          // A missing face costs some glyphs, not the render.
+          console.warn('[captions] font failed:', e);
+          notes.push('The caption font for this language could not be loaded, so some characters may not show.');
+        }
         for (const [i, item] of plan.entries()) {
           const name = `cap-${i}.ass`;
           await ffmpeg.writeFile(name, new TextEncoder().encode(buildAss(words, item.ratio, item.canvas, opts.captions.style)));
@@ -397,16 +405,32 @@ async function captionWords(
 }
 
 const FONTS_DIR = '/fonts';
-let fontInstalled: FFmpegInstance | null = null;
+/** Faces already written into each engine instance's filesystem. */
+const installedFonts = new WeakMap<FFmpegInstance, Set<string>>();
 
-/** Put the caption font where libass looks (subtitles=...:fontsdir=/fonts). */
-async function installCaptionFont(ffmpeg: FFmpegInstance): Promise<void> {
-  if (fontInstalled === ffmpeg) return;
-  const res = await fetch(`/fonts/${CAPTION_FONT_FILE}`);
-  if (!res.ok) throw new Error('Could not load the caption font.');
+/**
+ * Put every face the transcript needs where libass looks
+ * (subtitles=...:fontsdir=/fonts). libass does not search subfolders, so all
+ * faces go flat into /fonts. Large faces (CJK, several MB) are fetched only
+ * when the words need them, and the HTTP cache keeps them for next time.
+ */
+async function installCaptionFonts(
+  ffmpeg: FFmpegInstance,
+  words: CaptionWord[],
+  onStatus: (label: string) => void,
+): Promise<void> {
+  const done = installedFonts.get(ffmpeg) ?? new Set<string>();
+  installedFonts.set(ffmpeg, done);
   await ffmpeg.createDir(FONTS_DIR).catch(() => undefined);
-  await ffmpeg.writeFile(`${FONTS_DIR}/${CAPTION_FONT_FILE}`, new Uint8Array(await res.arrayBuffer()));
-  fontInstalled = ffmpeg;
+  for (const font of captionFonts(words)) {
+    if (done.has(font.file)) continue;
+    if (font.file !== 'Anton-Regular.ttf') onStatus('Getting the caption font for this language…');
+    const res = await fetch(`/fonts/${font.file}`);
+    if (!res.ok) throw new Error(`Could not load the caption font ${font.family}.`);
+    const base = font.file.split('/').pop()!;
+    await ffmpeg.writeFile(`${FONTS_DIR}/${base}`, new Uint8Array(await res.arrayBuffer()));
+    done.add(font.file);
+  }
 }
 
 type PlannedOutput = {

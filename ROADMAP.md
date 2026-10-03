@@ -108,8 +108,14 @@ Not done, deliberately: AI clip selection and scheduled posting. Both need
 server-side AI or platform API approvals (TikTok/Meta app review), and the
 first would break "your footage never leaves your device".
 
-Known limits: captions use Anton, which has no CJK/Arabic glyphs, so those
-languages render as boxes; Auto-track needs a format the browser can decode
+- **Captions in every script.** `captions/scripts.ts` picks a bold Noto face
+  per word (Arabic, Hebrew, Indic, Thai, CJK and more; public/fonts/captions,
+  SIL OFL), fetched only when a transcript needs it. CJK and Thai join without
+  spaces and break lines by display width. Verified by `verify:captions`
+  (glyph coverage and libass fallback for 26 languages) and through the
+  in-browser engine.
+
+Known limits: Auto-track needs a format the browser can decode
 (falls back to centre otherwise); transcription speed depends on the device.
 
 ## 4. Oracle VM (deferred, not required)

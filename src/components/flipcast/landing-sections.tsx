@@ -43,7 +43,7 @@ const FEATURES = [
   {
     icon: Captions,
     title: 'Word-by-word captions',
-    body: 'Whisper transcribes on your device. Three burn-in styles, plus an .srt file for any editor.',
+    body: 'Transcribed on your device in dozens of languages, from Spanish to Hindi to Japanese. Three styles, plus an .srt file.',
   },
   {
     icon: Layers,
