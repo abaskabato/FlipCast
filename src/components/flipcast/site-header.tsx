@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, CreditCard, Layers, LogOut, UserRound } from 'lucide-react';
+import { ChevronDown, CreditCard, LogOut, UserRound } from 'lucide-react';
 
 import { authClient, useSession } from '@/lib/auth-client';
+import { LogoMark } from './logo-mark';
 
 type SessionUser = { name?: string | null; email: string; image?: string | null };
 
@@ -45,9 +46,7 @@ export function Avatar({ user, size = 36 }: { user: SessionUser; size?: number }
 export function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2.5" aria-label="Flipcast home">
-      <span className="fc-gradient rounded-2xl p-2 text-white shadow-lg shadow-pink-500/30">
-        <Layers className="h-5 w-5" />
-      </span>
+      <LogoMark size={36} className="shrink-0 rounded-[8px] shadow-lg shadow-pink-500/30" />
       <span className="fc-display text-xl font-extrabold tracking-tight text-white">Flipcast</span>
     </Link>
   );
