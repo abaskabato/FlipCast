@@ -6,6 +6,8 @@ import { SUPPORT_EMAIL } from '@/lib/site';
 export function SiteFooter() {
   const links = [
     { href: '/pricing', label: 'Pricing' },
+    { href: '/opus-clip-alternative', label: 'vs Opus Clip' },
+    { href: '/podcast-clip-maker', label: 'For podcasts' },
     { href: '/terms', label: 'Terms' },
     { href: '/privacy', label: 'Privacy' },
   ];

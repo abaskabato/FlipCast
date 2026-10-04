@@ -22,12 +22,12 @@ export const metadata: Metadata = {
 // Off on the live site until a live Stripe key is set; see billingEnabled().
 const paidPlansOpen = billingEnabled();
 
-/** Checked against Opus Clip's public pricing, 2026-10. Kept unnamed so it ages well. */
+/** Checked against Opus Clip's public pricing page, 2026-10. Kept unnamed so it ages well. */
 const GAP: [feature: string, elsewhere: string][] = [
-  ['9:16, 1:1 and 16:9 from one video', 'From $29/mo'],
-  ['Tracking that follows the speaker', 'From $29/mo'],
+  ['Rendering many clips at once', 'From $29/mo'],
+  ['Your video stays on your device', 'Uploaded to their servers'],
   ['Captions without a watermark', 'Paid plans'],
-  ['Exports that never expire', 'Deleted after days on free'],
+  ['Exports that never expire', 'Deleted after 3 days on free'],
 ];
 
 const FAQ = [

@@ -1,207 +1,91 @@
-# Flipcast Product Roadmap
+# Flipcast roadmap
 
-## 1. Shipped (this commit)
+Where Flipcast stands, how to switch on the parts that need accounts, and
+what comes next. Updated 2026-10-04. Git history has the earlier versions.
 
-The original spec called for an upload → cloud transcode → download pipeline.
-That model is abandoned. **Rendering happens in the user's browser** via FFmpeg
-WASM, which removes the compute, storage and bandwidth blockers entirely and
-makes "your footage never leaves your device" a real property rather than a
-promise.
+## How it works
 
-- **Auth** — Better Auth (email/password, sessions, password reset) on
-  `src/lib/auth.ts`, UI from `@daveyplate/better-auth-ui`.
-- **DB** — Postgres via Drizzle. `video_jobs` + a new `job_outputs` table with
-  one row per rendered format. Migration in `drizzle/0000_launch_schema.sql`.
-- **Render engine** — `src/lib/video/ffmpeg-client.ts`, FFmpeg WASM with cores
-  self-hosted in `public/ffmpeg`. Multi-threaded core when cross-origin isolated
-  and 4+ cores, single-threaded fallback otherwise.
-- **Geometry** — dimension-free crop expressions in `src/lib/video/geometry.ts`,
-  verified against real ffmpeg.
-- **Probing** — MP4/MOV container parser, so files the browser cannot decode are
-  still measurable.
-- **Quota** — 180 s/month free tier, reserved atomically up front and refunded on
-  failure, with monthly rollover.
-- **Job API** — `POST/PATCH /api/transform` (authorise + reserve, then record
-  terminal state), `GET /api/jobs`, `GET /api/jobs/[id]`, `GET /api/me/usage`.
-- **Retired** — `/api/uploads/*` now return an explicit `410` so any stale client
-  fails loudly rather than mysteriously. `/api/downloads/[id]` returns `409`
-  explaining that local renders have no server-side file.
+Everything heavy runs **in the user's browser**: decoding and encoding
+(FFmpeg WASM), face and person detection (MediaPipe), speech-to-text (Whisper
+via transformers.js) and clip finding. The server only does accounts, quota,
+job records and billing. So hosting stays near $0, there is no render queue,
+and "your video never leaves your device" is literally true.
 
-Verified: `tsc --noEmit` clean, `next build` clean, and five verification suites
-green (`verify:geometry`, `verify:expr`, `verify:probe`, `verify:render`,
-`verify:e2e`). `verify:e2e` drives a real browser through signup → upload →
-render → quota debit against Postgres.
+- **Hosting**: Vercel project `flipcast` (Hobby), domain flipcast.dev.
+- **Database**: Neon Postgres via Drizzle. Production migrations run during the
+  production build (`scripts/migrate-production.mjs`); a failed migration fails
+  the build and leaves the previous deployment live. Keep migrations additive.
+- **Big static files** (engine binaries, fonts, models, demo clips) load from
+  jsDelivr, pinned by version and commit, with the copies in `/public` as
+  fallback (`src/lib/asset-cdn.ts`, checked by `npm run verify:cdn`).
 
-## 2. Honest gaps
+## Shipped
 
-1. **Payments need keys.** `POST /api/billing/checkout` and the webhook handler
-   are implemented and type-checked, but with no `STRIPE_SECRET_KEY` checkout
-   returns a 503 and the upgrade button explains why. Free tier is fully
-   enforced throughout, so nothing is lost while billing is off. The webhook is
-   the only writer of `subscription_tier` — the client cannot set it.
-2. ~~**`smart_face` renders centred.**~~ Shipped as Auto-track: MediaPipe face
-   detection on the device, smoothed into a moving crop (see 3b).
-3. **No history playback.** Past jobs list their metadata, but output bytes were
-   never stored, so old formats can only be re-rendered.
-4. **Speed.** ~8x realtime on a 3 s clip. Mitigated with the MT core and honest
-   UI copy, but it is the single biggest UX cost of the browser-render model.
-5. **Pricing page figures are aspirational.** `/pricing` shows intended prices;
-   the authoritative amount is whatever the Stripe price ID encodes.
+**Making clips**
+- 9:16, 1:1 and 16:9 from one source in one pass, sized to the source.
+- Framing: centre, manual, or Auto-track (follows the speaker), with split
+  screen in the 9:16 cut while two people are on camera.
+- Captions: word-by-word, five styles, any language Whisper detects (the
+  language is detected on the device; transformers.js would otherwise force
+  English), a font per script, an .srt file, and **editable before rendering**.
+- Clip finding: ranked **on the device** by hook, clean start and end, pacing,
+  focus and length (`src/lib/clips/local.ts`). Optional AI picks through Vercel
+  AI Gateway when `CLIP_FINDING_ENABLED=1`, falling back to on-device.
+- **Render all ticked clips** in one go, each with its own job and quota.
+- Import from Dropbox, Google Drive or direct links (not YouTube; see below).
 
-## 3. Next (in order)
+**Accounts, billing, publishing**
+- Email and password accounts (Better Auth); password reset once email is set up.
+- Plans: Free 60 min/month (videos up to 10 min), Creator 5 h, Agency 25 h.
+  Quota is reserved up front and refunded on failure or cancel.
+- Stripe checkout and webhook are built. **The live site refuses Stripe test
+  mode**, so paid plans show "Coming soon" until live keys are set.
+- Publishing and scheduling to YouTube and TikTok are built and switched off
+  (need the platforms' apps; see below).
 
-1. **Turn on billing.** Create the four Stripe prices, set the env vars, register
-   the webhook. Everything else in the payment path is already written.
-2. **Real face tracking.** Either a small ONNX/WASM detector or per-frame crop
-   expressions. Needs a latency budget decision, since it multiplies the filter
-   work in the slowest part of the pipeline.
-3. **Progress accuracy.** `PATCH /api/transform` currently records terminal
-   state only; wire per-output progress so history can show partial renders.
-4. **COEP audit.** `require-corp` blocks any third-party embed. Analytics,
-   Stripe iframes and OAuth popups will each need an explicit carve-out.
-5. **Retention.** Decide whether to store output metadata only (current) or to
-   opt users into server-side copies, which reintroduces the storage problem
-   browser rendering was chosen to avoid.
+**Running it**
+- `/admin` (emails in `ADMIN_EMAILS`): users, activation, week-1 return,
+  renders and failures, Auto-track use, sign-ups by source (`?ref=` /
+  `?utm_source=` and referring site), and errors from users' browsers.
+- Search: sitemap, robots, social preview image, `/opus-clip-alternative` and
+  `/podcast-clip-maker`.
 
-## 3a. Shipped since the section above
+**Tests**: `npm run verify` (geometry, expressions, probing, planning,
+tracking, layout, captions, clips, render), plus `verify:billing`,
+`verify:social`, `verify:import` and `verify:cdn`.
 
-- **Interactive manual crop.** `filterExpr(ratio, focus)` takes a focal point in
-  frame fractions; `FocusPicker` lets the user click or drag it, with arrow-key
-  support and a live overlay of the real crop rectangle per selected ratio.
-  Verified in `verify:expr` (out-of-bounds focus clamps, centre vs corner must
-  differ) and end-to-end in `verify:render` through the actual browser pipeline.
-- **Billing endpoints.** `POST /api/billing/checkout` (validated with zod,
-  signature-free, redirect URLs derived from `BETTER_AUTH_URL` rather than any
-  request header) and `POST /api/billing/webhook` (raw-body signature
-  verification, the sole writer of `subscription_tier`).
-- **`/pricing` page.** Static, so it cannot fail on a cold serverless start.
+## Switching on the parts that need accounts
 
-## 3b. Competitive pass (2026-10-02)
+| What | What to set (Vercel, Production) | Notes |
+|---|---|---|
+| Paid plans | Remove the test-mode Stripe Marketplace integration, then run `STRIPE_SECRET_KEY=sk_live_... node scripts/stripe-setup.mjs https://flipcast.dev` and set the `STRIPE_*` values it prints | Restricted live key recommended. Vercel's Hobby plan is non-commercial: move to Pro (or another host) once charging |
+| Password reset | `RESEND_API_KEY`, `AUTH_EMAIL_FROM` | Resend free tier; verify the flipcast.dev sending domain |
+| AI clip picks (optional) | `CLIP_FINDING_ENABLED=1` | Needs AI Gateway credit; on-device picks work without it |
+| YouTube publishing | `SOCIAL_TOKEN_KEY`, `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` | Google Cloud app with YouTube Data API v3; redirect `https://flipcast.dev/api/social/youtube/callback`; uploads stay private until Google audits the app |
+| TikTok publishing | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | Login Kit + Content Posting API; redirect `https://flipcast.dev/api/social/tiktok/callback`; posts stay private until TikTok's audit (weeks) |
+| TikTok scheduling | `SOCIAL_SCHEDULER_ENABLED=1`, `CRON_SECRET`, storage for waiting clips | Built on Vercel Blob plus a 5-minute cron, which needs Vercel Pro. Free route not built yet: S3-compatible storage (Backblaze B2 or Cloudflare R2) and an external cron (cron-job.org) |
 
-Benchmarked against Opus Clip, Kapwing, VEED and CapCut. Closed the gaps that
-fit the on-device model:
+## Known limits
 
-- **Allowances.** Free 60 min/mo (clips up to 10 min), Creator 5 h (30 min),
-  Agency 25 h (60 min). Rendering is on the user's device, so minutes cost us
-  almost nothing; Creator is about 4 cents a minute against Opus Clip's 10.
-- **Auto-track.** `subject-detect.ts` samples frames through a `<video>`
-  element and MediaPipe BlazeFace (whole frame plus three overlapping tiles,
-  so small faces in wide shots are found). `tracking.ts` rejects false
-  detections, bridges gaps, smooths with a zero-phase filter, simplifies with
-  RDP and emits a flat piecewise-linear crop expression evaluated per frame.
-  Verified by `verify:track` (a moving subject stays centred to the pixel).
-- **Auto captions.** Audio is extracted with ffmpeg, transcribed in a worker
-  with Whisper base (word timestamps, transformers.js, ~77 MB model cached
-  after first use), grouped into short lines per shape and burned in with
-  libass in three styles; an .srt is offered too. Verified by
-  `verify:captions` against a real libass.
+- Speed depends on the user's device; an old laptop renders slowly.
+- The free plan caps a video at 10 minutes, which rules out full podcast
+  episodes until paid plans open (or the cap is raised).
+- Files are processed in the browser, up to 400 MB.
+- Auto-track needs a video the browser can decode; otherwise it centres.
+- A batch reads the whole source once per clip, so long sources batch slowly.
+- No YouTube link import: YouTube's terms forbid downloading, and it would put
+  the YouTube publishing approval at risk. Under consideration (see below).
 
-- **Split screen.** When two similar-sized people are on camera together for
-  most of a clip and too far apart for one 9:16 window, `layout.ts` stacks a
-  crop of each (left speaker on top) in the 9:16 output; other shapes keep the
-  tracked crop. Detection falls back to an EfficientDet person detector when
-  BlazeFace finds fewer than two faces, which is what makes profile speakers in
-  wide podcast shots detectable. Verified by `verify:layout` and on real
-  footage (public/demo/twoshot-*).
+## Next
 
-Not done, deliberately: AI clip selection and scheduled posting. Both need
-server-side AI or platform API approvals (TikTok/Meta app review), and the
-first would break "your footage never leaves your device".
-
-- **Captions in every script.** `captions/scripts.ts` picks a bold Noto face
-  per word (Arabic, Hebrew, Indic, Thai, CJK and more; public/fonts/captions,
-  SIL OFL), fetched only when a transcript needs it. CJK and Thai join without
-  spaces and break lines by display width. Verified by `verify:captions`
-  (glyph coverage and libass fallback for 26 languages) and through the
-  in-browser engine.
-
-## 3c. Closing the gaps with Opus Clip (2026-10-03)
-
-- **Layouts switch mid-clip.** `planSplitSegments` returns time stretches; the
-  9:16 output shows split screen only while two people are on camera
-  (majority vote over neighbouring samples, stretches under 2 s ignored, gaps
-  under 1.2 s bridged) and the tracked crop otherwise, in the same ffmpeg pass.
-- **Captions.** Two new styles (Reveal, One word) and a pop-in on the spoken
-  word; an opt-in "High accuracy" model (Whisper small, 249 MB) next to the
-  default base model.
-- **Import from a link.** Dropbox and Google Drive share links, and direct
-  file links. The browser fetches directly when the host allows it; otherwise
-  `/api/import` passes the file through in 4 MB range requests (the Vercel
-  response cap), storing nothing, with SSRF checks at connect time. Streaming
-  sites (YouTube, TikTok, ...) are refused: their terms forbid downloading.
-- **AI clip finding.** Speech is transcribed on the device; only the
-  transcript goes to `/api/clips`, which asks Claude (Anthropic SDK through
-  Vercel AI Gateway, `anthropic/claude-opus-5.5`, structured output) for
-  stand-alone clips by line number. "Use this clip" renders just that stretch,
-  with detection limited to it and captions reusing the transcript.
-
-Verified by `verify:layout`, `verify:captions`, `verify:import` and
-`verify:clips` (the Claude call against a local stand-in for AI Gateway), and
-end to end through the in-browser engine.
-
-### Going live: what needs your accounts
-
-1. **AI Gateway** (clip finding): enable AI Gateway on the Vercel team. The
-   deployment authenticates with its OIDC token automatically; AI Gateway needs
-   credits or a payment method on file (a 403 `customer_verification_required`
-   means the latter). Optional: `AI_GATEWAY_MODEL` to change the model.
-2. **Stripe live mode**: activate/claim the Stripe account, then run
-   `STRIPE_SECRET_KEY=sk_live_... node scripts/stripe-setup.mjs https://flipcast.dev`
-   and set the `STRIPE_*` variables it prints in Vercel (Production).
-3. **Vercel Pro**: Hobby is for non-commercial use; required before charging.
-
-## 3d. Publishing and scheduling to YouTube and TikTok (2026-10-03)
-
-- **Connect** YouTube channels and TikTok accounts with OAuth (popup from the
-  publish dialog, or the Account page). Tokens are encrypted with AES-256-GCM
-  (`SOCIAL_TOKEN_KEY`); OAuth state is signed and bound to the user, platform
-  and a browser cookie; tokens refresh automatically and a revoked grant asks
-  the user to reconnect.
-- **YouTube**: the server opens a resumable upload session; the browser uploads
-  the clip straight to YouTube. Scheduling is native (`publishAt`), so nothing
-  is stored and nothing runs on our side at publish time.
-- **TikTok now**: Direct Post with the browser uploading chunks straight to
-  TikTok. The form follows TikTok's posting rules (account shown, privacy
-  chosen with no default, interaction settings, commercial-content
-  disclosure, music-usage consent) so the app can pass TikTok's audit.
-- **TikTok scheduled**: the rendered clip waits in private Vercel Blob storage;
-  `/api/social/cron` claims due posts (safe against overlapping runs), streams
-  them to TikTok in planned chunks, checks the outcome, retries twice, and
-  deletes the stored clip once done or canceled.
-- New tables `social_accounts` and `scheduled_posts` (`drizzle/0002_social_publishing.sql`,
-  additive only).
-
-Verified by `verify:social` (26 checks against stand-ins for Google and TikTok
-and a local Postgres) and browser tests of the publish dialog.
-
-### Turning publishing on
-
-1. `npm run db:migrate` against production (adds two tables; touches nothing else).
-2. `SOCIAL_TOKEN_KEY` (`openssl rand -base64 32`) in Vercel.
-3. YouTube: Google Cloud project, YouTube Data API v3, OAuth consent screen
-   (the `youtube.upload` scope needs Google verification for more than 100
-   users; until the API project is audited, uploads are private), web OAuth
-   client with redirect `https://flipcast.dev/api/social/youtube/callback`;
-   set `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`.
-4. TikTok: developer app with Login Kit + Content Posting API (Direct Post),
-   redirect `https://flipcast.dev/api/social/tiktok/callback`; set
-   `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET`; apply for the audit (posts are
-   private until approved; review takes weeks).
-5. TikTok scheduling (after Vercel Pro): private Blob store, `CRON_SECRET`,
-   `SOCIAL_SCHEDULER_ENABLED=1`, and the cron entry in `vercel.json`
-   (see `.env.example`).
-
-Known limits: Auto-track needs a format the browser can decode
-(falls back to centre otherwise); transcription speed depends on the device.
-
-## 4. Oracle VM (deferred, not required)
-
-The VM was the original render host and is **no longer on the critical path**.
-If it is ever provisioned for other reasons:
-
-- Image `Canonical Ubuntu 24.04 Minimal aarch64`, shape `VM.Standard.A1.Flex`
-  (4 OCPU / 24 GB), public subnet, ingress TCP 22/80/443, SSH user `ubuntu`.
-- Provisioning was blocked on shape capacity (E2 Micro full; needs A1.Flex with an
-  ARM image, AD-2/AD-3).
-- It would host Postgres and a `renderEngine: 'worker'` path for long clips,
-  which are the one case the browser handles badly.
+1. **Decide the free video length** (currently 10 minutes).
+2. **YouTube link import**: decided to build like Opus Clip. Blocked on a test
+   of whether YouTube allows downloads from cloud servers (`yt-dlp`, needs a
+   permission rule to run here); may need the Oracle server and proxies.
+3. **Daily posting** for Flipcast's own accounts through Buffer's MCP server.
+4. **Brand kit**: saved logo overlay, caption colours and font (a reason to pay).
+5. **Faster rendering** with WebCodecs (hardware encoding).
+6. **Batch speed**: load the source into the engine once per batch.
+7. **Re-download past renders** (today history keeps metadata only).
+8. **Oracle server** (deferred): only if YouTube import or long renders need a
+   server. Free ARM capacity was unavailable last time.
