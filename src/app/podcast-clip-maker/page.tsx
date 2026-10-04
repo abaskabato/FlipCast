@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import { ComparePage } from '@/components/flipcast/compare-page';
-import { MAX_SOURCE_SECONDS, TIER_LIMITS } from '@/lib/quotas';
+import { BROWSER_MAX_INPUT_BYTES, MAX_SOURCE_SECONDS, TIER_LIMITS } from '@/lib/quotas';
 
 export const metadata: Metadata = {
   title: 'Free podcast clip maker with captions — Flipcast',
@@ -31,7 +31,7 @@ export default function PodcastClipMakerPage() {
         { feature: 'Every platform at once', us: '9:16 for TikTok, Reels and Shorts; 1:1 for Instagram and LinkedIn; 16:9 for YouTube and X', them: '', usWins: true },
         { feature: 'Many clips at once', us: 'Tick the suggestions you like and render them all in one go', them: '', usWins: true },
         { feature: 'Watermark', us: 'None, even on the free plan', them: '', usWins: true },
-        { feature: 'Episode length', us: `Free: videos up to ${freeMaxMinutes} minutes and ${freeMinutes} minutes a month. Trim a longer episode to its best stretch first.`, them: '' },
+        { feature: 'Full episodes', us: `Load a whole episode (files up to ${Math.round(BROWSER_MAX_INPUT_BYTES / 1024 / 1024)} MB) and clip it. Free covers ${freeMinutes} minutes of clips a month, each up to ${freeMaxMinutes} minutes.`, them: '', usWins: true },
       ]}
       steps={[
         { title: 'Drop in the episode', body: 'The video file, or a Dropbox or Google Drive link. It opens in this tab; nothing is uploaded.' },

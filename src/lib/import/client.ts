@@ -8,8 +8,11 @@
  *    joins them; the server passes each piece through and stores nothing.
  *
  * Streaming sites (YouTube, TikTok, Instagram...) are refused: downloading
- * from them breaks their terms of service.
+ * from them breaks their terms of service. A YouTube link gets its own error
+ * (YouTubeLinkError) so the studio can guide the owner to YouTube Studio.
  */
+
+import { youtubeId } from './youtube-link';
 
 /** Hosts whose pages are players, not files, and whose terms forbid downloading. */
 const STREAMING_HOSTS =
@@ -22,6 +25,16 @@ export class LinkImportError extends Error {
   }
 }
 
+/** A YouTube video link: the studio shows how to download it from YouTube Studio. */
+export class YouTubeLinkError extends LinkImportError {
+  readonly videoId: string;
+  constructor(videoId: string) {
+    super('YouTube videos cannot be imported directly. Download it from YouTube Studio, then add the file.');
+    this.name = 'YouTubeLinkError';
+    this.videoId = videoId;
+  }
+}
+
 /** The direct-download form of a share link, or the link unchanged. */
 export function normaliseLink(raw: string): URL {
   let url: URL;
@@ -31,6 +44,8 @@ export function normaliseLink(raw: string): URL {
     throw new LinkImportError('That is not a valid link.');
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new LinkImportError('Only http and https links work.');
+  const yt = youtubeId(url.toString());
+  if (yt) throw new YouTubeLinkError(yt);
   if (STREAMING_HOSTS.test(url.hostname)) {
     throw new LinkImportError(
       `${url.hostname.replace(/^www\./, '')} links cannot be imported: their terms do not allow downloading. Download your own video from there, then upload the file.`,

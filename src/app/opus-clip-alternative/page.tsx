@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import { ComparePage } from '@/components/flipcast/compare-page';
-import { MAX_SOURCE_SECONDS, TIER_LIMITS } from '@/lib/quotas';
+import { BROWSER_MAX_INPUT_BYTES, MAX_SOURCE_SECONDS, TIER_LIMITS } from '@/lib/quotas';
 
 export const metadata: Metadata = {
   title: 'Free Opus Clip alternative, no watermark — Flipcast',
@@ -48,7 +48,7 @@ export default function OpusClipAlternativePage() {
         points: [
           'Your computer is old or slow. Flipcast renders on your device, so a fast laptop renders fast and an old one takes a while; Opus Clip renders on their servers.',
           'You want to paste YouTube, Zoom or Twitch links instead of uploading a file.',
-          `Your videos are long. Flipcast's free plan takes videos up to ${freeMaxMinutes} minutes, and it processes the file in your browser.`,
+          `Your video files are very large. Flipcast processes the file in your browser, up to ${Math.round(BROWSER_MAX_INPUT_BYTES / 1024 / 1024)} MB, and a free render can be up to ${freeMaxMinutes} minutes long (plenty for short clips from a long video).`,
           'You need AI B-roll, a shared team workspace or an API.',
         ],
       }}

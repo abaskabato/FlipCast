@@ -36,7 +36,9 @@ and "your video never leaves your device" is literally true.
 
 **Accounts, billing, publishing**
 - Email and password accounts (Better Auth); password reset once email is set up.
-- Plans: Free 60 min/month (videos up to 10 min), Creator 5 h, Agency 25 h.
+- Plans: Free 60 min/month (each render up to 10 min), Creator 5 h (30 min),
+  Agency 25 h (60 min). The limit is on what is rendered, so clips can be cut
+  from a video of any length.
   Quota is reserved up front and refunded on failure or cancel.
 - Stripe checkout and webhook are built. **The live site refuses Stripe test
   mode**, so paid plans show "Coming soon" until live keys are set.
@@ -68,24 +70,25 @@ tracking, layout, captions, clips, render), plus `verify:billing`,
 ## Known limits
 
 - Speed depends on the user's device; an old laptop renders slowly.
-- The free plan caps a video at 10 minutes, which rules out full podcast
-  episodes until paid plans open (or the cap is raised).
-- Files are processed in the browser, up to 400 MB.
+- Files are processed in the browser, up to 400 MB; a long episode in 1080p
+  can be bigger, and transcribing it takes a while on a slow machine.
 - Auto-track needs a video the browser can decode; otherwise it centres.
 - A batch reads the whole source once per clip, so long sources batch slowly.
-- No YouTube link import: YouTube's terms forbid downloading, and it would put
-  the YouTube publishing approval at risk. Under consideration (see below).
+- No direct YouTube import: YouTube blocks downloads from Vercel's servers, so
+  a pasted YouTube link guides the owner to YouTube Studio's Download (see Next).
 
 ## Next
 
-1. **Decide the free video length** (currently 10 minutes).
-2. **YouTube link import**: decided to build like Opus Clip. Blocked on a test
-   of whether YouTube allows downloads from cloud servers (`yt-dlp`, needs a
-   permission rule to run here); may need the Oracle server and proxies.
-3. **Daily posting** for Flipcast's own accounts through Buffer's MCP server.
-4. **Brand kit**: saved logo overlay, caption colours and font (a reason to pay).
-5. **Faster rendering** with WebCodecs (hardware encoding).
-6. **Batch speed**: load the source into the engine once per batch.
-7. **Re-download past renders** (today history keeps metadata only).
-8. **Oracle server** (deferred): only if YouTube import or long renders need a
+1. **YouTube link import from a server**: YouTube blocks Vercel's servers
+   (tested 2026-10-04: 2 of 10 lookups worked, 0 of 28 with other clients), so
+   pasted YouTube links send owners to YouTube Studio's Download instead. The
+   server version (pinned, checksum-verified yt-dlp and a lookup) is parked on
+   the `youtube-import` branch; it needs a server YouTube does not block (a
+   small Google Cloud VM worked in testing) and suits a paid plan.
+2. **Daily posting** for Flipcast's own accounts through Buffer's MCP server.
+3. **Brand kit**: saved logo overlay, caption colours and font (a reason to pay).
+4. **Faster rendering** with WebCodecs (hardware encoding).
+5. **Batch speed**: load the source into the engine once per batch.
+6. **Re-download past renders** (today history keeps metadata only).
+7. **Oracle server** (deferred): only if YouTube import or long renders need a
    server. Free ARM capacity was unavailable last time.

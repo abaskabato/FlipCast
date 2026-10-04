@@ -12,7 +12,8 @@
  */
 import { createHash } from 'node:crypto';
 
-import { normaliseLink, LinkImportError } from '../src/lib/import/client.ts';
+import { normaliseLink, LinkImportError, YouTubeLinkError } from '../src/lib/import/client.ts';
+import { studioUrl, youtubeId } from '../src/lib/import/youtube-link.ts';
 import { fetchPiece, isPrivateAddress, MAX_CHUNK, validateUrl } from '../src/lib/import/remote.ts';
 
 let failed = 0;
@@ -34,6 +35,24 @@ let yt = null;
 try { normaliseLink('https://www.youtube.com/watch?v=abc'); } catch (e) { yt = e; }
 check(yt instanceof LinkImportError && /terms/.test(yt.message), 'YouTube refused, with the reason');
 check(await refuses(() => normaliseLink('ftp://example.com/a.mp4')), 'non-http links refused');
+
+// YouTube: recognised in every common form, and sent to YouTube Studio.
+const ID = 'dQw4w9WgXcQ';
+const forms = [
+  `https://www.youtube.com/watch?v=${ID}&t=42s`,
+  `https://youtu.be/${ID}?si=abc`,
+  `https://m.youtube.com/watch?v=${ID}`,
+  `https://www.youtube.com/shorts/${ID}`,
+  `https://www.youtube.com/live/${ID}?feature=share`,
+  `https://www.youtube.com/embed/${ID}`,
+  `https://music.youtube.com/watch?v=${ID}&list=RD`,
+];
+check(forms.every((f) => youtubeId(f) === ID), 'YouTube links are recognised in all their forms');
+check(youtubeId('https://www.youtube.com/@flipcast') === null && youtubeId('https://example.com/watch?v=dQw4w9WgXcQ') === null, 'channel pages and other sites are not mistaken for videos');
+let ytErr;
+try { normaliseLink(forms[1]); } catch (e) { ytErr = e; }
+check(ytErr instanceof YouTubeLinkError && ytErr.videoId === ID, 'a YouTube link raises the guided-download error with its video id');
+check(studioUrl(ID) === `https://studio.youtube.com/video/${ID}/edit`, 'the help links to that video in YouTube Studio');
 
 // ---- addresses -----------------------------------------------------------------
 for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1']) {

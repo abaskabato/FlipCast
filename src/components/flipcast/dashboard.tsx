@@ -8,6 +8,7 @@ import {
   Clock,
   CreditCard,
   Crop,
+  ExternalLink,
   Focus as FocusIcon,
   HardDrive,
   Layers,
@@ -41,7 +42,8 @@ import {
 } from '@/lib/video/ffmpeg-client';
 import { detectSubject, TrackingUnavailableError } from '@/lib/video/subject-detect';
 import { smoothPath, type SubjectPath } from '@/lib/video/tracking';
-import { importFromLink } from '@/lib/import/client';
+import { importFromLink, YouTubeLinkError } from '@/lib/import/client';
+import { studioUrl } from '@/lib/import/youtube-link';
 import { useFeatures } from '@/lib/features-client';
 import { CLIP_LENGTHS, toLines, type ClipLength, type ClipSuggestion } from '@/lib/clips/lines';
 import { findClipsLocally } from '@/lib/clips/local';
@@ -734,8 +736,11 @@ export default function FlipcastDashboard() {
   const [linkUrl, setLinkUrl] = useState('');
   const [linkProgress, setLinkProgress] = useState<number | null>(null);
   const [heroLink, setHeroLink] = useState('');
+  /** A pasted YouTube link's video id: shows how to download it from YouTube Studio. */
+  const [youtubeHelp, setYoutubeHelp] = useState<string | null>(null);
   const loadFromLink = useCallback(async (url?: string) => {
     setError(null);
+    setYoutubeHelp(null);
     setLinkProgress(0);
     try {
       const imported = await importFromLink(url ?? linkUrl, {
@@ -745,7 +750,12 @@ export default function FlipcastDashboard() {
       setLinkUrl('');
       await acceptFile(imported);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not import that link.');
+      if (e instanceof YouTubeLinkError) {
+        setYoutubeHelp(e.videoId);
+        setLinkUrl('');
+      } else {
+        setError(e instanceof Error ? e.message : 'Could not import that link.');
+      }
     } finally {
       setLinkProgress(null);
     }
@@ -1165,6 +1175,37 @@ export default function FlipcastDashboard() {
         <div className="fc-notice-error" role="alert">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {youtubeHelp && !file && (
+        <div className="fc-card space-y-3 p-5" role="status">
+          <p className="fc-heading">Get your YouTube video in two clicks</p>
+          <p className="fc-body">
+            YouTube does not let other sites fetch its videos, but if it is your video you can download the
+            original from YouTube Studio:
+          </p>
+          <ol className="fc-body list-decimal space-y-1 pl-5">
+            <li>Open it in YouTube Studio (signed in to the channel that owns it).</li>
+            <li>
+              Open the <span className="font-semibold text-zinc-100">⋮</span> menu at the top right and choose{' '}
+              <span className="font-semibold text-zinc-100">Download</span>.
+            </li>
+            <li>Add the downloaded file here.</li>
+          </ol>
+          <div className="flex flex-wrap gap-2">
+            <a href={studioUrl(youtubeHelp)} target="_blank" rel="noopener noreferrer" className="fc-btn-primary">
+              <ExternalLink className="h-4 w-4" />
+              Open in YouTube Studio
+            </a>
+            <button onClick={() => inputRef.current?.click()} className="fc-btn-secondary">
+              <Upload className="h-4 w-4" />
+              Add the downloaded file
+            </button>
+          </div>
+          <p className="fc-meta">
+            Not your video? Ask the creator for the file, and only clip videos you have permission to use.
+          </p>
         </div>
       )}
 
