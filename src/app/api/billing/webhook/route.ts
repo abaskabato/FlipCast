@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type Stripe from 'stripe';
 
-import { stripe } from '@/lib/billing/stripe';
+import { stripe, testModeAllowed } from '@/lib/billing/stripe';
 import {
   findUserByCustomerId,
   getBillingState,
@@ -89,6 +89,13 @@ export async function POST(request: Request) {
   } catch (e) {
     console.warn('[billing] signature verification failed:', e instanceof Error ? e.message : e);
     return NextResponse.json({ error: 'invalid_signature' }, { status: 400 });
+  }
+
+  // A test-mode payment must never grant a plan on the live site. Answer 200
+  // so Stripe does not keep retrying, but change nothing.
+  if (!event.livemode && !testModeAllowed()) {
+    console.warn(`[billing] ignored test-mode ${event.type} on the live site`);
+    return NextResponse.json({ received: true, ignored: 'test_mode' });
   }
 
   try {

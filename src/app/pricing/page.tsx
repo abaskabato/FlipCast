@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import PricingPlans from '@/components/flipcast/pricing-plans';
 import { SiteFooter } from '@/components/flipcast/site-chrome';
 import { SiteHeader } from '@/components/flipcast/site-header';
+import { billingEnabled } from '@/lib/billing/stripe';
 
 /**
  * Public pricing page.
@@ -18,9 +19,8 @@ export const metadata: Metadata = {
     'Render vertical, square and landscape cuts from one video, in your browser. Free tier needs no card.',
 };
 
-const billingEnabled = Boolean(
-  process.env.STRIPE_SECRET_KEY?.trim() && process.env.STRIPE_PRICE_CREATOR_MONTHLY?.trim(),
-);
+// Off on the live site until a live Stripe key is set; see billingEnabled().
+const paidPlansOpen = billingEnabled();
 
 /** Checked against Opus Clip's public pricing, 2026-10. Kept unnamed so it ages well. */
 const GAP: [feature: string, elsewhere: string][] = [
@@ -69,7 +69,7 @@ export default function PricingPage() {
           </p>
         </div>
 
-        <PricingPlans billingEnabled={billingEnabled} />
+        <PricingPlans billingEnabled={paidPlansOpen} />
 
         <section className="mx-auto mt-16 max-w-3xl">
           <h2 className="fc-display text-center text-3xl font-bold text-white">

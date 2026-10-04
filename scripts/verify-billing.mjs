@@ -8,7 +8,9 @@
  *  - the plan comes from the subscription's current state in Stripe, so a
  *    duplicate is harmless and a stale "active" event after cancellation does
  *    not re-grant the plan;
- *  - a failure talking to Stripe answers 500 so Stripe retries.
+ *  - a failure talking to Stripe answers 500 so Stripe retries;
+ *  - on the live site (VERCEL_ENV=production) a test-mode payment grants
+ *    nothing, checkout refuses a test key and the pricing page stays closed.
  *
  * Needs a throwaway database, never production:
  *   BILLING_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55433/flipcast_test npm run verify:billing
@@ -60,8 +62,8 @@ const { eq } = await import('drizzle-orm');
 
 const signer = new Stripe('sk_test_dummy');
 let n = 0;
-const deliver = async (type, object, { secret = SECRET } = {}) => {
-  const payload = JSON.stringify({ id: `evt_${++n}`, object: 'event', type, data: { object }, api_version: '2026-08-26.dahlia', created: Math.floor(Date.now() / 1000) });
+const deliver = async (type, object, { secret = SECRET, livemode } = {}) => {
+  const payload = JSON.stringify({ id: `evt_${++n}`, object: 'event', type, data: { object }, api_version: '2026-08-26.dahlia', created: Math.floor(Date.now() / 1000), ...(livemode === undefined ? {} : { livemode }) });
   const signature = signer.webhooks.generateTestHeaderString({ payload, secret });
   const res = await POST(new Request('http://x/api/billing/webhook', { method: 'POST', headers: { 'stripe-signature': signature }, body: payload }));
   return res.status;
@@ -113,6 +115,32 @@ try {
   stripeDown = false;
 
   check(await deliver('invoice.paid', { id: 'in_1', object: 'invoice' }) === 200, 'other event types are acknowledged');
+
+  // ---- the live site never sells a plan for a test card ----
+  const { billingEnabled } = await import('../src/lib/billing/stripe.ts');
+  const { POST: checkout } = await import('../src/app/api/billing/checkout/route.ts');
+  process.env.VERCEL_ENV = 'production';
+  subs.set('sub_2', sub('sub_2', 'active'));
+  const paid = { ...session, id: 'cs_2', subscription: 'sub_2', payment_status: 'paid' };
+  check(await deliver('checkout.session.completed', paid, { livemode: false }) === 200, 'live site: a test-mode payment is acknowledged');
+  check((await userRow()).subscriptionTier === 'free', 'live site: a test-mode payment grants nothing');
+  await deliver('checkout.session.completed', paid, { livemode: true });
+  check((await userRow()).subscriptionTier === 'creator', 'live site: a live payment grants the plan');
+  await db.update(schema.user).set({ subscriptionTier: 'free' }).where(eq(schema.user.id, 'bill-1'));
+  process.env.STRIPE_ALLOW_TEST_MODE = '1';
+  await deliver('checkout.session.completed', paid, { livemode: false });
+  check((await userRow()).subscriptionTier === 'creator', 'STRIPE_ALLOW_TEST_MODE=1 lets a deliberate staging site accept test payments');
+  delete process.env.STRIPE_ALLOW_TEST_MODE;
+
+  check(billingEnabled() === false, 'live site with a test key: paid plans are closed');
+  const refused = await checkout(new Request('http://x/api/billing/checkout', { method: 'POST', body: JSON.stringify({ tier: 'creator' }) }));
+  const refusedBody = await refused.json();
+  check(refused.status === 503 && /coming soon/i.test(refusedBody.message), `live site with a test key: checkout refuses (${refused.status}: ${refusedBody.message})`);
+  process.env.STRIPE_SECRET_KEY = 'sk_live_dummy';
+  check(billingEnabled() === true, 'live site with a live key: paid plans are open');
+  process.env.STRIPE_SECRET_KEY = 'sk_test_dummy';
+  delete process.env.VERCEL_ENV;
+  check(billingEnabled() === true, 'previews and local runs keep test mode for testing');
 } catch (e) {
   check(false, `unexpected error: ${e.stack}`);
 } finally {

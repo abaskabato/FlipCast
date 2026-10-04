@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { auth } from '@/lib/auth';
-import { isPurchasable, PLAN_IDS, stripe, unavailableReason } from '@/lib/billing/stripe';
+import { billingEnabled, isPurchasable, PLAN_IDS, stripe, unavailableReason } from '@/lib/billing/stripe';
 import { getBillingState, setStripeCustomerId } from '@/lib/billing/sync';
 
 /**
@@ -22,7 +22,8 @@ const Body = z.object({
 
 export async function POST(request: Request) {
   const client = stripe();
-  if (!client) {
+  // billingEnabled() also refuses a test-mode key on the live site.
+  if (!client || !billingEnabled()) {
     return NextResponse.json(
       { error: 'unavailable', message: unavailableReason() },
       { status: 503 },

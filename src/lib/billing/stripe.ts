@@ -71,6 +71,29 @@ export function stripe(): Stripe | null {
   return cached;
 }
 
+/** Live or test, from the key's prefix. Anything that is not a live key counts as test. */
+export function stripeKeyMode(): 'live' | 'test' | null {
+  const key = process.env.STRIPE_SECRET_KEY?.trim();
+  if (!key) return null;
+  return /^(sk|rk)_live_/.test(key) ? 'live' : 'test';
+}
+
+/**
+ * Whether test-mode payments may grant plans on this deployment. Never on the
+ * live site: anyone could otherwise buy a plan with Stripe's public test card.
+ * Previews, local runs and tests use test keys freely; a production deployment
+ * can opt in on purpose with STRIPE_ALLOW_TEST_MODE=1 (e.g. a staging domain).
+ */
+export function testModeAllowed(): boolean {
+  return process.env.VERCEL_ENV !== 'production' || process.env.STRIPE_ALLOW_TEST_MODE === '1';
+}
+
+/** True when paid plans can be bought on this deployment. */
+export function billingEnabled(): boolean {
+  const mode = stripeKeyMode();
+  return Boolean(mode && PLAN_IDS.creator.monthly && (mode === 'live' || testModeAllowed()));
+}
+
 /** True when a tier can actually be purchased right now. */
 export function isPurchasable(tier: string, period: BillingPeriod): boolean {
   if (tier !== 'creator' && tier !== 'agency') return false;
@@ -88,6 +111,10 @@ export function unavailableReason(): string {
   }
   if (!isPurchasable('creator', 'monthly')) {
     console.warn('[billing] checkout requested but STRIPE_PRICE_* is not set.');
+    return 'Paid plans are coming soon. Your free allowance keeps working in the meantime.';
+  }
+  if (!billingEnabled()) {
+    console.warn('[billing] checkout requested but the Stripe key is a test key on the live site.');
     return 'Paid plans are coming soon. Your free allowance keeps working in the meantime.';
   }
   return 'This plan cannot be purchased right now.';
