@@ -2,31 +2,34 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Upload,
-  Video,
-  Sparkles,
+  AlertTriangle,
   Check,
   CheckCircle2,
-  AlertTriangle,
-  Loader2,
-  X,
-  ShieldCheck,
-  HardDrive,
   Clock,
   CreditCard,
   Crop,
-  ScanFace,
   Focus as FocusIcon,
-  RefreshCw,
+  HardDrive,
+  Layers,
   Link2,
+  ListChecks,
+  Loader2,
+  RefreshCw,
+  ScanFace,
   Scissors,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  Video,
   Wand2,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 
 import { fetchAsset } from '@/lib/asset-cdn';
 import { useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
+import { CaptionEditor } from './caption-editor';
 import FocusPicker from './focus-picker';
 import ShareActions from './share-actions';
 import {
@@ -70,6 +73,18 @@ import RealDemo, { HeroShowcase } from './real-demo';
 import { displayName, SiteHeader } from './site-header';
 
 type TargetRatio = Ratio;
+
+/** One rendered clip: its formats, and its captions as .srt when there were any. */
+type ClipResult = {
+  key: string;
+  /** The suggestion's title when rendered from clip finding. */
+  title: string | null;
+  trim: Trim | null;
+  outputs: RenderedOutput[];
+  srt: string | null;
+};
+
+const suggestionKey = (c: { start: number; end: number }) => `${c.start}-${c.end}`;
 type TrackingMode = 'auto_center' | 'smart_face' | 'manual_crop';
 
 type Usage = {
@@ -185,13 +200,19 @@ export default function FlipcastDashboard() {
   /** Who picked the current suggestions: the AI, or the on-device ranker. */
   const [clipSource, setClipSource] = useState<'ai' | 'device' | null>(null);
   const [trim, setTrim] = useState<Trim | null>(null);
-  const [srt, setSrt] = useState<string | null>(null);
+  /** Suggestions ticked for "Render selected", by suggestionKey(). */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** The transcript as first made, so caption edits can be undone. */
+  const [transcriptOriginal, setTranscriptOriginal] = useState<CaptionWord[] | null>(null);
+  const [wordsPhase, setWordsPhase] = useState<{ label: string; progress: number } | null>(null);
+  const [wordsError, setWordsError] = useState<string | null>(null);
 
   const [usage, setUsage] = useState<Usage | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState('');
-  const [outputs, setOutputs] = useState<RenderedOutput[]>([]);
+  /** Finished renders: one per clip (a single render is one entry). */
+  const [results, setResults] = useState<ClipResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
@@ -329,8 +350,10 @@ export default function FlipcastDashboard() {
     async (next: File | null) => {
       setError(null);
       setNotice(null);
-      setOutputs([]);
+      setResults([]);
       setClipWords(null);
+      setTranscriptOriginal(null);
+      setWordsError(null);
       setSuggestions(null);
       setClipError(null);
       setTrim(null);
@@ -376,206 +399,249 @@ export default function FlipcastDashboard() {
   );
 
   // ---- render -----------------------------------------------------------
-  const startRender = useCallback(async () => {
-    if (!signedIn) {
-      focusAccount();
-      return;
-    }
-    if (!file || !meta || isRendering) return;
-    if (targets.length === 0) {
-      setError('Pick at least one output format.');
-      return;
-    }
-    // A chosen clip is what gets rendered, so it is what counts.
-    const renderSeconds = trim ? trim.end - trim.start : meta.durationSeconds;
-    if (usage && renderSeconds > usage.remainingSeconds) {
-      setError(
-        `Not enough quota left. This clip needs ${formatDuration(renderSeconds)}; you have ${formatQuota(usage.remainingSeconds)}.`,
-      );
-      return;
-    }
-
-    setIsRendering(true);
-    setProgress(0);
-    setPhase('Preparing…');
-    setError(null);
-    setOutputs([]);
-    setSrt(null);
-    setNotice(null);
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    // Authorise + reserve quota before spending a long render.
-    let jobId: string | null = null;
-    try {
-      const startRes = await fetch('/api/transform', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: file.name,
-          targets,
-          mode: trackingMode,
-          sourceDurationSeconds: trim ? trim.end - trim.start : meta.durationSeconds,
-          sourceWidth: meta.width,
-          sourceHeight: meta.height,
-          sourceSizeBytes: file.size,
-        }),
-      });
-      const startBody = await startRes.json().catch(() => ({}));
-      if (!startRes.ok) {
-        setError(startBody.error ?? 'Could not start the render.');
-        setIsRendering(false);
-        abortRef.current = null;
+  /**
+   * Render one or more clips with the current settings. Each clip reserves
+   * quota and records its own job, exactly like a single render; a clip that
+   * fails is noted and the rest carry on, and Cancel keeps what is finished.
+   */
+  const runRenders = useCallback(
+    async (clips: { trim: Trim | null; title: string | null }[]) => {
+      if (!signedIn) {
+        focusAccount();
         return;
       }
-      jobId = startBody.jobId;
-      setUsage(startBody.usage ?? null);
-    } catch {
-      setError('Could not reach the server to reserve your quota.');
-      setIsRendering(false);
-      abortRef.current = null;
-      return;
-    }
+      if (!file || !meta || isRendering || clips.length === 0) return;
+      if (targets.length === 0) {
+        setError('Pick at least one output format.');
+        return;
+      }
+      // A chosen clip is what gets rendered, so it is what counts.
+      const seconds = (t: Trim | null) => (t ? t.end - t.start : meta.durationSeconds);
+      const totalSeconds = clips.reduce((sum, c) => sum + seconds(c.trim), 0);
+      if (usage && totalSeconds > usage.remainingSeconds) {
+        setError(
+          `Not enough quota left. ${clips.length > 1 ? `These ${clips.length} clips need` : 'This clip needs'} ${formatDuration(totalSeconds)}; you have ${formatQuota(usage.remainingSeconds)}.`,
+        );
+        return;
+      }
 
-    try {
-      const notes: string[] = [];
+      setIsRendering(true);
+      setProgress(0);
+      setPhase('Preparing…');
+      setError(null);
+      setResults([]);
+      setNotice(null);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const batch = clips.length > 1;
+      const notes = new Set<string>();
+      const finished: ClipResult[] = [];
+      const started = performance.now();
 
-      // Auto-track: find the subject first, then render with a moving crop.
-      // Takes the first 15% of the bar. Any failure falls back to centred.
-      let track: SubjectPath | null = null;
-      let split: SplitSegment[] = [];
-      const trackShare = trackingMode === 'smart_face' ? 0.15 : 0;
-      if (trackingMode === 'smart_face') {
-        setPhase('Finding the speaker…');
+      for (let i = 0; i < clips.length; i++) {
+        const clip = clips[i];
+        const prefix = batch ? `Clip ${i + 1} of ${clips.length} · ` : '';
+        const report = (fraction: number, label: string) => {
+          setProgress((i + fraction) / clips.length);
+          setPhase(prefix + label);
+        };
+
+        // Authorise + reserve quota before spending a long render.
+        let jobId: string | null = null;
         try {
-          const samples = await detectSubject(file, meta.durationSeconds, {
-            signal: controller.signal,
-            range: trim,
-            onProgress: (f) => {
-              setProgress(f * trackShare);
-              setPhase(`Finding the speaker · ${Math.round(f * 100)}%`);
-            },
+          const startRes = await fetch('/api/transform', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: file.name,
+              targets,
+              mode: trackingMode,
+              sourceDurationSeconds: seconds(clip.trim),
+              sourceWidth: meta.width,
+              sourceHeight: meta.height,
+              sourceSizeBytes: file.size,
+            }),
           });
-          track = smoothPath(samples);
-          if (!track) notes.push('No face was found, so the clip was framed from the centre.');
-          if (splitOn && targets.includes('9:16')) {
-            split = planSplitSegments(samples, meta.width, meta.height);
-            if (isWholeClip(split)) {
-              notes.push('Two people were on camera together, so the 9:16 cut uses split screen.');
-            } else if (split.length) {
-              notes.push(
-                `The 9:16 cut switches to split screen ${split.length === 1 ? 'once' : `${split.length} times`}, while both people are on camera.`,
+          const startBody = await startRes.json().catch(() => ({}));
+          if (!startRes.ok) {
+            // Out of quota or refused: later clips would be refused too.
+            const reason = startBody.error ?? 'Could not start the render.';
+            if (batch && finished.length) notes.add(`Stopped after ${finished.length} clips: ${reason}`);
+            else setError(reason);
+            break;
+          }
+          jobId = startBody.jobId;
+          setUsage(startBody.usage ?? null);
+        } catch {
+          setError('Could not reach the server to reserve your quota.');
+          break;
+        }
+
+        try {
+          // Auto-track: find the subject first, then render with a moving crop.
+          // Takes the first 15% of the clip's share. Any failure falls back to centred.
+          let track: SubjectPath | null = null;
+          let split: SplitSegment[] = [];
+          const trackShare = trackingMode === 'smart_face' ? 0.15 : 0;
+          if (trackingMode === 'smart_face') {
+            report(0, 'Finding the speaker…');
+            try {
+              const samples = await detectSubject(file, meta.durationSeconds, {
+                signal: controller.signal,
+                range: clip.trim,
+                onProgress: (f) => report(f * trackShare, `Finding the speaker · ${Math.round(f * 100)}%`),
+              });
+              track = smoothPath(samples);
+              if (!track) {
+                notes.add(
+                  batch
+                    ? 'No face was found in some clips, so they were framed from the centre.'
+                    : 'No face was found, so the clip was framed from the centre.',
+                );
+              }
+              if (splitOn && targets.includes('9:16')) {
+                split = planSplitSegments(samples, meta.width, meta.height);
+                if (isWholeClip(split)) {
+                  notes.add('Two people were on camera together, so the 9:16 cut uses split screen.');
+                } else if (split.length) {
+                  notes.add('The 9:16 cut switches to split screen while both people are on camera.');
+                }
+              }
+            } catch (e) {
+              if (controller.signal.aborted) throw new RenderAbortedError();
+              reportError('tracking', e);
+              notes.add(
+                e instanceof TrackingUnavailableError
+                  ? `${e.message} It was framed from the centre instead.`
+                  : 'Auto-track could not run here, so the clip was framed from the centre.',
               );
             }
           }
+
+          const result = await renderToRatios(file, targets, {
+            signal: controller.signal,
+            trim: clip.trim,
+            // The transcript (made for clip finding or the caption check, and
+            // possibly edited) is reused instead of transcribing again.
+            captionWords: clipWords,
+            // Manual crop moves the window to a fixed point; auto-track moves it
+            // over time; otherwise framing stays centred.
+            focus: trackingMode === 'manual_crop' ? focus : null,
+            track,
+            split,
+            // Lets the engine size outputs to the source and copy instead of
+            // re-encoding where the output would be identical.
+            source: meta,
+            captions: captionsOn
+              ? {
+                  style: captionStyle,
+                  transcribe: (pcm, progressReport) =>
+                    transcribe(pcm, {
+                      signal: controller.signal,
+                      model: captionModel,
+                      onProgress: (p) =>
+                        p.stage === 'download'
+                          ? progressReport(
+                              p.fraction * 0.4,
+                              `Getting the caption model ready (one time) · ${formatBytes(p.loadedBytes)} of ${formatBytes(p.totalBytes)}`,
+                            )
+                          : progressReport(0.4 + p.fraction * 0.6, `Writing captions · ${Math.round(p.fraction * 100)}%`),
+                    }),
+                }
+              : null,
+            onProgress: ({ progress: p, label }) => report(trackShare + p * (1 - trackShare), label),
+          });
+
+          // Batch files are numbered so they do not overwrite each other.
+          const outputs = batch
+            ? result.outputs.map((o) => ({ ...o, filename: o.filename.replace(/_(\d+x\d+)\.mp4$/, `_clip${i + 1}_$1.mp4`) }))
+            : result.outputs;
+          finished.push({
+            key: `${i}-${clip.trim?.start ?? 0}`,
+            title: clip.title,
+            trim: clip.trim,
+            outputs,
+            srt: result.captions?.srt ?? null,
+          });
+          setResults([...finished]);
+          for (const n of result.notes) notes.add(n);
+
+          await fetch('/api/transform', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobId,
+              status: 'completed',
+              outputs: result.outputs.map((o) => ({
+                ratio: o.ratio,
+                sizeBytes: o.sizeBytes,
+                width: o.width,
+                height: o.height,
+              })),
+            }),
+          }).catch(() => undefined);
         } catch (e) {
-          if (controller.signal.aborted) throw new RenderAbortedError();
-          reportError('tracking', e);
-          notes.push(
-            e instanceof TrackingUnavailableError
-              ? `${e.message} It was framed from the centre instead.`
-              : 'Auto-track could not run here, so the clip was framed from the centre.',
-          );
+          const aborted = e instanceof RenderAbortedError || controller.signal.aborted;
+          // Report cancellations too: either terminal state refunds the reservation,
+          // and an unreported job would otherwise sit in "rendering" forever.
+          await fetch('/api/transform', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              aborted
+                ? { jobId, status: 'canceled' }
+                : { jobId, status: 'failed', error: String(e).slice(0, 400) },
+            ),
+          }).catch(() => undefined);
+          if (aborted) {
+            if (finished.length) notes.add(`Cancelled. ${finished.length} of ${clips.length} clips were finished.`);
+            else setError('Render cancelled.');
+            break;
+          }
+          const message = e instanceof Error ? e.message : 'Render failed.';
+          if (batch) notes.add(`Clip ${i + 1} could not be rendered: ${message}`);
+          else setError(message);
         }
       }
 
-      const result = await renderToRatios(file, targets, {
-        signal: controller.signal,
-        trim,
-        // Clip finding already transcribed this file; captions reuse it.
-        captionWords: clipWords,
-        // Manual crop moves the window to a fixed point; auto-track moves it
-        // over time; otherwise framing stays centred.
-        focus: trackingMode === 'manual_crop' ? focus : null,
-        track,
-        split,
-        // Lets the engine size outputs to the source and copy instead of
-        // re-encoding where the output would be identical.
-        source: meta,
-        captions: captionsOn
-          ? {
-              style: captionStyle,
-              transcribe: (pcm, report) =>
-                transcribe(pcm, {
-                  signal: controller.signal,
-                  model: captionModel,
-                  onProgress: (p) =>
-                    p.stage === 'download'
-                      ? report(
-                          p.fraction * 0.4,
-                          `Getting the caption model ready (one time) · ${formatBytes(p.loadedBytes)} of ${formatBytes(p.totalBytes)}`,
-                        )
-                      : report(0.4 + p.fraction * 0.6, `Writing captions · ${Math.round(p.fraction * 100)}%`),
-                }),
-            }
-          : null,
-        onProgress: ({ progress: p, label }) => {
-          setProgress(trackShare + p * (1 - trackShare));
-          setPhase(label);
-        },
-      });
-
-      setOutputs(result.outputs);
-      setSrt(result.captions?.srt ?? null);
-      notes.push(...result.notes);
-      if (notes.length) setNotice(notes.join(' '));
-      setProgress(1);
-      setPhase(
-        `Done in ${formatDuration(result.elapsedSeconds)} · rendered locally, nothing uploaded`,
-      );
-
-      await fetch('/api/transform', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jobId,
-          status: 'completed',
-          outputs: result.outputs.map((o) => ({
-            ratio: o.ratio,
-            sizeBytes: o.sizeBytes,
-            width: o.width,
-            height: o.height,
-          })),
-        }),
-      }).catch(() => undefined);
+      if (notes.size) setNotice([...notes].join(' '));
+      if (finished.length) {
+        setProgress(1);
+        setPhase(
+          `Done in ${formatDuration((performance.now() - started) / 1000)} · rendered locally, nothing uploaded`,
+        );
+      }
       void loadUsage();
-    } catch (e) {
-      const aborted = e instanceof RenderAbortedError || controller.signal.aborted;
-      setError(aborted ? 'Render cancelled.' : e instanceof Error ? e.message : 'Render failed.');
-      // Report cancellations too: either terminal state refunds the reservation,
-      // and an unreported job would otherwise sit in "rendering" forever.
-      await fetch('/api/transform', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          aborted
-            ? { jobId, status: 'canceled' }
-            : { jobId, status: 'failed', error: String(e).slice(0, 400) },
-        ),
-      }).catch(() => undefined);
-      void loadUsage();
-    } finally {
       setIsRendering(false);
       abortRef.current = null;
-    }
-  }, [
-    file,
-    meta,
-    isRendering,
-    signedIn,
-    targets,
-    trackingMode,
-    focus,
-    splitOn,
-    captionsOn,
-    captionStyle,
-    captionModel,
-    trim,
-    clipWords,
-    usage,
-    loadUsage,
-    focusAccount,
-  ]);
+    },
+    [
+      file,
+      meta,
+      isRendering,
+      signedIn,
+      targets,
+      trackingMode,
+      focus,
+      splitOn,
+      captionsOn,
+      captionStyle,
+      captionModel,
+      clipWords,
+      usage,
+      loadUsage,
+      focusAccount,
+    ],
+  );
+
+  /** The main button: the chosen clip, or the whole video. */
+  const startRender = useCallback(() => runRenders([{ trim, title: null }]), [runRenders, trim]);
+
+  /** Every ticked suggestion, one after another. */
+  const renderPicked = useCallback(() => {
+    const chosen = (suggestions ?? []).filter((c) => picked.has(suggestionKey(c)));
+    void runRenders(chosen.map((c) => ({ trim: { start: c.start, end: c.end }, title: c.title })));
+  }, [runRenders, suggestions, picked]);
 
   const cancelRender = useCallback(() => {
     abortRef.current?.abort();
@@ -599,12 +665,13 @@ export default function FlipcastDashboard() {
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
 
-  const downloadSrt = () => {
-    if (!srt || !file) return;
-    const url = URL.createObjectURL(new Blob([srt], { type: 'application/x-subrip' }));
+  const downloadSrt = (r: ClipResult, n: number) => {
+    if (!r.srt || !file) return;
+    const url = URL.createObjectURL(new Blob([r.srt], { type: 'application/x-subrip' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${file.name.replace(/\.[^.]+$/, '') || 'captions'}.srt`;
+    const base = file.name.replace(/\.[^.]+$/, '') || 'captions';
+    a.download = results.length > 1 ? `${base}_clip${n}.srt` : `${base}.srt`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -612,19 +679,21 @@ export default function FlipcastDashboard() {
   };
 
   const downloadAll = () => {
-    outputs.forEach((o, i) => setTimeout(() => downloadOutput(o), i * 400));
+    results
+      .flatMap((r) => r.outputs)
+      .forEach((o, i) => setTimeout(() => downloadOutput(o), i * 400));
   };
 
   // One stable object URL per output.
   //
   // Creating these inline in JSX would mint a fresh URL on every re-render
   // (progress ticks, quota refreshes), which leaks the old ones and makes the
-  // <video> previews restart from frame 0. Revoke them when the outputs change.
+  // <video> previews restart from frame 0. Revoke them when the results change.
   const previewUrls = useMemo(() => {
     const urls = new Map<string, string>();
-    for (const o of outputs) urls.set(o.ratio, URL.createObjectURL(o.blob));
+    for (const r of results) for (const o of r.outputs) urls.set(`${r.key}:${o.ratio}`, URL.createObjectURL(o.blob));
     return urls;
-  }, [outputs]);
+  }, [results]);
 
   useEffect(() => {
     const urls = previewUrls;
@@ -686,33 +755,58 @@ export default function FlipcastDashboard() {
    * Transcribe on this device, then rank stand-alone clips: with the AI when
    * it is on for this site, otherwise (or if it fails) on this device.
    */
+  /**
+   * The whole file's transcript, made on this device once and kept per file.
+   * Clip finding and the caption check share it, and captions reuse it.
+   */
+  const ensureTranscript = useCallback(
+    async (onPhase: (p: { label: string; progress: number }) => void): Promise<CaptionWord[]> => {
+      if (clipWords) return clipWords;
+      if (!file) throw new Error('Load a video first.');
+      onPhase({ label: 'Listening to the audio…', progress: 0 });
+      const words = await transcribeSource(
+        file,
+        (pcm, report) =>
+          transcribe(pcm, {
+            model: captionModel,
+            onProgress: (p) =>
+              p.stage === 'download'
+                ? report(
+                    p.fraction * 0.3,
+                    `Getting the speech model ready (one time) · ${formatBytes(p.loadedBytes)} of ${formatBytes(p.totalBytes)}`,
+                  )
+                : report(0.3 + p.fraction * 0.7, `Transcribing on your device · ${Math.round(p.fraction * 100)}%`),
+          }),
+        (f, label) => onPhase({ label, progress: f }),
+      );
+      if (!words) throw new Error('This video has no audio track, so there is nothing to transcribe.');
+      setClipWords(words);
+      setTranscriptOriginal(words);
+      return words;
+    },
+    [clipWords, file, captionModel],
+  );
+
+  /** "Check the words": transcribe now so captions can be corrected before rendering. */
+  const checkWords = useCallback(async () => {
+    setWordsError(null);
+    try {
+      await ensureTranscript(setWordsPhase);
+    } catch (e) {
+      reportError('captions', e);
+      setWordsError(e instanceof Error ? e.message : 'Could not transcribe this video.');
+    } finally {
+      setWordsPhase(null);
+    }
+  }, [ensureTranscript]);
+
   const findClipsNow = useCallback(async () => {
     if (!file || !meta) return;
     setClipError(null);
     setSuggestions(null);
     setClipSource(null);
     try {
-      let words = clipWords;
-      if (!words) {
-        setClipPhase({ label: 'Listening to the audio…', progress: 0 });
-        words = await transcribeSource(
-          file,
-          (pcm, report) =>
-            transcribe(pcm, {
-              model: captionModel,
-              onProgress: (p) =>
-                p.stage === 'download'
-                  ? report(
-                      p.fraction * 0.3,
-                      `Getting the speech model ready (one time) · ${formatBytes(p.loadedBytes)} of ${formatBytes(p.totalBytes)}`,
-                    )
-                  : report(0.3 + p.fraction * 0.7, `Transcribing on your device · ${Math.round(p.fraction * 100)}%`),
-            }),
-          (f, label) => setClipPhase({ label, progress: f * 0.85 }),
-        );
-        if (!words) throw new Error('This video has no audio track, so there is nothing to find clips in.');
-        setClipWords(words);
-      }
+      const words = await ensureTranscript((p) => setClipPhase({ label: p.label, progress: p.progress * 0.85 }));
       const lines = toLines(words);
       if (lines.length < 3) throw new Error('Not enough speech was found to pick clips from.');
       setClipPhase({ label: 'Picking the best moments…', progress: 0.9 });
@@ -741,7 +835,12 @@ export default function FlipcastDashboard() {
     } finally {
       setClipPhase(null);
     }
-  }, [aiClips, file, meta, clipWords, captionModel, clipLength]);
+  }, [aiClips, file, meta, ensureTranscript, clipLength]);
+
+  // New suggestions start all ticked for "Render selected".
+  useEffect(() => {
+    setPicked(new Set((suggestions ?? []).map(suggestionKey)));
+  }, [suggestions]);
 
   /** From the landing CTAs: bring the studio into view and open the picker. */
   const startFromCta = () => {
@@ -752,12 +851,13 @@ export default function FlipcastDashboard() {
   const reset = () => {
     setFile(null);
     setMeta(null);
-    setOutputs([]);
+    setResults([]);
     setClipWords(null);
+    setTranscriptOriginal(null);
+    setWordsError(null);
     setSuggestions(null);
     setClipError(null);
     setTrim(null);
-    setSrt(null);
     setProgress(0);
     setPhase('');
     setError(null);
@@ -1124,7 +1224,7 @@ export default function FlipcastDashboard() {
               </div>
             </div>
           ) : (
-            <button onClick={() => void findClipsNow()} disabled={isRendering} className="fc-btn-primary">
+            <button onClick={() => void findClipsNow()} disabled={isRendering || wordsPhase !== null} className="fc-btn-primary">
               <Wand2 className="h-4 w-4" />
               {suggestions ? 'Find clips again' : 'Find clips'}
             </button>
@@ -1148,18 +1248,57 @@ export default function FlipcastDashboard() {
             </p>
           )}
 
+          {suggestions && suggestions.length > 1 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3">
+              <p className="text-sm text-zinc-200">
+                Render the ticked clips one after another, with the formats, framing and captions below.
+                <span className="fc-meta block">
+                  {picked.size} of {suggestions.length} ticked ·{' '}
+                  {formatDuration(suggestions.filter((c) => picked.has(suggestionKey(c))).reduce((sum, c) => sum + c.end - c.start, 0))} of
+                  render time
+                </span>
+              </p>
+              <button
+                onClick={renderPicked}
+                disabled={isRendering || picked.size === 0 || targets.length === 0}
+                className="fc-btn-primary"
+              >
+                <Layers className="h-4 w-4" />
+                {signedIn ? `Render ${picked.size} ${picked.size === 1 ? 'clip' : 'clips'}` : 'Sign in to render clips'}
+              </button>
+            </div>
+          )}
+
           {suggestions && suggestions.length > 0 && (
             <ul className="space-y-2">
               {suggestions.map((c) => {
                 const chosen = trim?.start === c.start && trim?.end === c.end;
+                const key = suggestionKey(c);
                 return (
                   <li
-                    key={`${c.start}-${c.end}`}
+                    key={key}
                     className={`rounded-2xl border p-4 transition-colors ${
                       chosen ? 'border-pink-400/70 bg-pink-500/[0.08]' : 'border-white/[0.07] bg-white/[0.02]'
                     }`}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
+                      {suggestions.length > 1 && (
+                        <input
+                          type="checkbox"
+                          checked={picked.has(key)}
+                          onChange={(e) =>
+                            setPicked((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(key);
+                              else next.delete(key);
+                              return next;
+                            })
+                          }
+                          disabled={isRendering}
+                          aria-label={`Include "${c.title}" when rendering the ticked clips`}
+                          className="mt-1 h-4 w-4 shrink-0 accent-pink-500"
+                        />
+                      )}
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-white">{c.title}</p>
                         <p className="fc-meta mt-0.5 font-mono">
@@ -1413,6 +1552,57 @@ export default function FlipcastDashboard() {
               ))}
             </div>
           )}
+
+          {captionsOn && file && (
+            <div className="space-y-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <ListChecks className="h-4 w-4 text-pink-400" />
+                    Check the words
+                  </p>
+                  <p className="fc-meta mt-0.5 max-w-md">
+                    {clipWords
+                      ? `Fix names or misheard words before rendering. Changes apply to every format${suggestions?.length ? ' and every clip' : ''}.`
+                      : 'Transcribe now to read the captions and fix any mistakes before rendering.'}
+                  </p>
+                </div>
+                {clipWords && transcriptOriginal && clipWords !== transcriptOriginal && (
+                  <button
+                    onClick={() => setClipWords(transcriptOriginal)}
+                    disabled={isRendering}
+                    className="fc-btn-ghost !min-h-[32px] text-xs"
+                  >
+                    Undo all edits
+                  </button>
+                )}
+              </div>
+              {clipWords ? (
+                <CaptionEditor
+                  words={clipWords}
+                  range={trim}
+                  disabled={isRendering}
+                  onChange={setClipWords}
+                />
+              ) : wordsPhase ? (
+                <div className="space-y-2">
+                  <p className="flex items-center gap-2 text-sm text-zinc-200">
+                    <Loader2 className="h-4 w-4 animate-spin text-pink-400" />
+                    {wordsPhase.label}
+                  </p>
+                  <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
+                    <div className="fc-gradient h-full transition-all" style={{ width: `${Math.round(wordsPhase.progress * 100)}%` }} />
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => void checkWords()} disabled={isRendering || clipPhase !== null} className="fc-btn-secondary">
+                  <ListChecks className="h-4 w-4" />
+                  Transcribe and check
+                </button>
+              )}
+              {wordsError && <p className="text-sm text-red-300">{wordsError}</p>}
+            </div>
+          )}
         </div>
       </section>
 
@@ -1465,7 +1655,7 @@ export default function FlipcastDashboard() {
       )}
 
       {/* Outputs */}
-      {outputs.length > 0 && (
+      {results.length > 0 && (
         <section className="fc-card space-y-5 p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1474,56 +1664,81 @@ export default function FlipcastDashboard() {
                 Ready to post 🎉
               </h2>
               <p className="fc-meta mt-0.5">
-                {outputs.length} {outputs.length === 1 ? 'format' : 'formats'} rendered on your device
+                {results.length > 1
+                  ? `${results.length} clips · ${results.reduce((n, r) => n + r.outputs.length, 0)} files rendered on your device`
+                  : `${results[0].outputs.length} ${results[0].outputs.length === 1 ? 'format' : 'formats'} rendered on your device`}
               </p>
             </div>
-            <div className="flex gap-2">
-              <button onClick={downloadAll} className="fc-btn-primary">
+            <div className="flex flex-wrap gap-2">
+              <button onClick={downloadAll} className="fc-btn-primary" disabled={isRendering}>
                 Download all
               </button>
-              {srt && (
-                <button onClick={downloadSrt} className="fc-btn-secondary">
+              {results.length === 1 && results[0].srt && (
+                <button onClick={() => downloadSrt(results[0], 1)} className="fc-btn-secondary">
                   Captions .srt
                 </button>
               )}
-              <button onClick={reset} className="fc-btn-secondary">
+              <button onClick={reset} className="fc-btn-secondary" disabled={isRendering}>
                 Start over
               </button>
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {outputs.map((o) => (
-              <div
-                key={o.ratio}
-                className="flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4"
-              >
-                {/* Shown at the clip's real shape, framed like the screen it is for. */}
-                <div className="flex h-72 items-center justify-center rounded-xl bg-black/40 p-3">
-                  <video
-                    src={previewUrls.get(o.ratio)}
-                    className="max-h-full max-w-full rounded-[14px] bg-black shadow-xl shadow-black/50 ring-1 ring-white/10"
-                    style={{ aspectRatio: `${o.width} / ${o.height}` }}
-                    controls
-                    playsInline
-                  />
-                </div>
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="fc-display text-base font-bold text-white">{o.ratio}</p>
-                  <p className="fc-meta">
-                    {o.width}×{o.height} · {formatBytes(o.sizeBytes)}
+          {results.map((r, n) => (
+            <div key={r.key} className="space-y-3">
+              {results.length > 1 && (
+                <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-white/[0.06] pt-4">
+                  <p className="text-sm font-semibold text-white">
+                    Clip {n + 1}
+                    {r.title ? ` · ${r.title}` : ''}
+                    {r.trim && (
+                      <span className="fc-meta font-mono font-normal">
+                        {' '}
+                        · {formatDuration(r.trim.start)}–{formatDuration(r.trim.end)}
+                      </span>
+                    )}
                   </p>
+                  {r.srt && (
+                    <button onClick={() => downloadSrt(r, n + 1)} className="fc-btn-ghost !min-h-[32px] text-xs">
+                      Captions .srt
+                    </button>
+                  )}
                 </div>
-                <ShareActions
-                  output={o}
-                  onDownload={downloadOutput}
-                  durationSec={trim ? trim.end - trim.start : (meta?.durationSeconds ?? 0)}
-                />
+              )}
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {r.outputs.map((o) => (
+                  <div
+                    key={o.ratio}
+                    className="flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4"
+                  >
+                    {/* Shown at the clip's real shape, framed like the screen it is for. */}
+                    <div className="flex h-72 items-center justify-center rounded-xl bg-black/40 p-3">
+                      <video
+                        src={previewUrls.get(`${r.key}:${o.ratio}`)}
+                        className="max-h-full max-w-full rounded-[14px] bg-black shadow-xl shadow-black/50 ring-1 ring-white/10"
+                        style={{ aspectRatio: `${o.width} / ${o.height}` }}
+                        controls
+                        playsInline
+                      />
+                    </div>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="fc-display text-base font-bold text-white">{o.ratio}</p>
+                      <p className="fc-meta">
+                        {o.width}×{o.height} · {formatBytes(o.sizeBytes)}
+                      </p>
+                    </div>
+                    <ShareActions
+                      output={o}
+                      onDownload={downloadOutput}
+                      durationSec={r.trim ? r.trim.end - r.trim.start : (meta?.durationSeconds ?? 0)}
+                    />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
 
-          {phase && <p className="fc-meta">{phase}</p>}
+          {phase && !isRendering && <p className="fc-meta">{phase}</p>}
         </section>
       )}
 

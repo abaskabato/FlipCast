@@ -19,6 +19,7 @@ import ffmpegPath from 'ffmpeg-static';
 import { buildAss, buildSrt, captionFonts, groupWords, tagWords } from '../src/lib/captions/captions.ts';
 import { FONTS, hanFontFor } from '../src/lib/captions/scripts.ts';
 import { cleanWords } from '../src/lib/captions/words.ts';
+import { editableLines, joinWords, replaceLine } from '../src/lib/captions/edit.ts';
 
 const work = mkdtempSync(path.join(tmpdir(), 'flipcast-captions-'));
 const fontsDir = path.resolve(import.meta.dirname, '..', 'public', 'fonts');
@@ -242,6 +243,32 @@ rmSync(langWork, { recursive: true, force: true });
   check(texts(junk).join('') === 'ビーン込みを', `"\uFFFD" the model emitted is removed (${texts(junk).join(' | ')})`);
   const en = [w(' And', 0), w(' so', 0.3), w(' my', 0.6), w(' fellow', 0.9), w(' Americans,', 1.2)];
   check(JSON.stringify(texts(cleanWords(en, ' And so my fellow Americans,'))) === JSON.stringify(['And', 'so', 'my', 'fellow', 'Americans,']), 'English words pass through unchanged');
+}
+
+// ---- caption editing (src/lib/captions/edit.ts) --------------------------------
+{
+  const say = (text, t0, step = 0.4) => text.split(' ').map((x, i) => ({ text: x, start: t0 + i * step, end: t0 + i * step + 0.35 }));
+  const words = [...say('Welcome to the show.', 0), ...say('Today we talk about Flipkast and pricing.', 2.5), ...say('It matters.', 7)];
+  const lines = editableLines(words);
+  check(lines.length === 3 && lines[1].text === 'Today we talk about Flipkast and pricing.', `transcript splits into sentence lines (${lines.map((l) => l.text).join(' / ')})`);
+  check(editableLines(words, { start: 2.6, end: 4 }).length === 1, 'only lines inside the chosen clip are shown');
+
+  const fixed = replaceLine(words, lines[1].from, lines[1].to, 'Today we talk about Flipcast pricing.');
+  const fixedLine = editableLines(fixed)[1];
+  check(fixedLine.text === 'Today we talk about Flipcast pricing.', 'a retyped line replaces the words');
+  check(Math.abs(fixedLine.start - lines[1].start) < 1e-9 && Math.abs(fixedLine.end - lines[1].end) < 1e-9, 'the new words keep the line\'s time span');
+  const span = fixed.slice(lines[1].from, lines[1].from + 5);
+  check(span.every((w, i) => i === 0 || w.start >= span[i - 1].end - 1e-9) && span.every((w) => w.end > w.start), 'the new words are timed in order, without overlaps');
+  check(fixed.length === words.length - 1 && fixed[fixed.length - 1].text === 'matters.', 'the rest of the transcript is untouched');
+
+  const cleared = replaceLine(words, lines[0].from, lines[0].to, '   ');
+  check(cleared.length === words.length - 4 && cleared[0].text === 'Today', 'clearing a line removes its captions');
+
+  const ja = replaceLine([{ text: '牛乳', start: 0, end: 4 }], 0, 0, 'もりながの美味しい牛乳である');
+  check(ja.length > 1 && ja.map((w) => w.text).join('') === 'もりながの美味しい牛乳である', `Japanese without spaces is split into short timed pieces (${ja.map((w) => w.text).join(' | ')})`);
+  check(joinWords(ja) === 'もりながの美味しい牛乳である' && joinWords(say('a b', 0)) === 'a b', 'words are joined the way each script is written');
+  const long = replaceLine([{ text: 'x', start: 0, end: 2 }], 0, 0, 'internationalization');
+  check(long.length === 1, 'a long word in a spaced language stays one word');
 }
 
 console.log(fail ? `\nCAPTIONS: ${fail} FAILED` : '\nCAPTIONS: ALL PASS');
