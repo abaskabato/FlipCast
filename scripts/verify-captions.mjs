@@ -18,6 +18,7 @@ import ffmpegPath from 'ffmpeg-static';
 
 import { buildAss, buildSrt, captionFonts, groupWords, tagWords } from '../src/lib/captions/captions.ts';
 import { FONTS, hanFontFor } from '../src/lib/captions/scripts.ts';
+import { cleanWords } from '../src/lib/captions/words.ts';
 
 const work = mkdtempSync(path.join(tmpdir(), 'flipcast-captions-'));
 const fontsDir = path.resolve(import.meta.dirname, '..', 'public', 'fonts');
@@ -220,6 +221,28 @@ for (const [lang, list] of Object.entries(SAMPLES)) {
   check(run.status === 0 && misses.length === 0, `${lang.padEnd(7)} libass draws it with no font fallback${misses.length ? `: ${misses[0].trim()}` : ''}`);
 }
 rmSync(langWork, { recursive: true, force: true });
+
+// ---- Whisper word clean-up (src/lib/captions/words.ts) ---------------------------
+{
+  const w = (text, start) => ({ text, start, end: start + 0.3 });
+  const texts = (ws) => ws.map((x) => x.text);
+  // As transformers.js returns French: a leading space marks each word start.
+  const fr = cleanWords([w(' J', 0), w("'adore,", 0.2), w(' je', 0.6), w(' n', 0.8), w("'aime", 0.9), w(' pas.', 1.2)], " J'adore, je n'aime pas.");
+  check(JSON.stringify(texts(fr)) === JSON.stringify(["J'adore,", 'je', "n'aime", 'pas.']), `French elisions are one word (${texts(fr).join(' | ')})`);
+  check(fr[0].start === 0 && fr[0].end === 0.5, 'a joined word spans both pieces');
+  // A character split across two tokens decodes to "\uFFFD" in each piece.
+  const ja = cleanWords([w('牛乳ビーン\uFFFD', 0), w('\uFFFD込みを', 1), w('足らった', 2)], '牛乳ビーン盛込みを足らった');
+  check(texts(ja).join('') === '牛乳ビーン盛込みを足らった' && !texts(ja).join('').includes('\uFFFD'), `split characters are repaired from the full text (${texts(ja).join(' | ')})`);
+  const tail = cleanWords([w(' smile', 0), w(' \uFFFD', 0.4)], ' smile 😀');
+  check(texts(tail).join(' ') === 'smile 😀', `a broken last word is repaired too (${texts(tail).join(' | ')})`);
+  const lost = cleanWords([w(' ok', 0), w(' \uFFFD\uFFFD', 0.4)], ' something else entirely');
+  check(texts(lost).join(' ') === 'ok', 'an unplaceable "\uFFFD" is dropped rather than shown');
+  // Bytes that were never a character: the full text is broken too.
+  const junk = cleanWords([w('ビーン\uFFFD', 0), w('\uFFFD込みを', 1)], 'ビーン\uFFFD込みを');
+  check(texts(junk).join('') === 'ビーン込みを', `"\uFFFD" the model emitted is removed (${texts(junk).join(' | ')})`);
+  const en = [w(' And', 0), w(' so', 0.3), w(' my', 0.6), w(' fellow', 0.9), w(' Americans,', 1.2)];
+  check(JSON.stringify(texts(cleanWords(en, ' And so my fellow Americans,'))) === JSON.stringify(['And', 'so', 'my', 'fellow', 'Americans,']), 'English words pass through unchanged');
+}
 
 console.log(fail ? `\nCAPTIONS: ${fail} FAILED` : '\nCAPTIONS: ALL PASS');
 process.exit(fail ? 1 : 0);

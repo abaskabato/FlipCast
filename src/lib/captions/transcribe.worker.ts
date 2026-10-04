@@ -16,9 +16,10 @@
  * between segments.
  */
 
-import { env, pipeline } from '@huggingface/transformers';
+import { env, pipeline, Tensor } from '@huggingface/transformers';
 
 import { cdnUrl } from '../asset-cdn';
+import { cleanWords } from './words';
 
 /** Whisper base is quick to fetch and run; small is clearly more accurate, notably outside English. */
 const MODELS = {
@@ -67,10 +68,15 @@ export type WorkerMessage =
   | { type: 'error'; message: string };
 
 type Chunk = { text: string; timestamp: [number, number | null] };
-type Asr = (
+type Asr = ((
   audio: Float32Array,
   opts: Record<string, unknown>,
-) => Promise<{ text: string; chunks?: Chunk[] }>;
+) => Promise<{ text: string; chunks?: Chunk[] }>) & {
+  processor: (audio: Float32Array) => Promise<{ input_features: Tensor }>;
+  model: ((inputs: Record<string, Tensor>) => Promise<{ logits: Tensor }>) & {
+    generation_config: { decoder_start_token_id: number; lang_to_id?: Record<string, number>; is_multilingual?: boolean };
+  };
+};
 
 const post = (m: WorkerMessage) => (self as unknown as Worker).postMessage(m);
 
@@ -125,12 +131,53 @@ function segmentBounds(audio: Float32Array): number[] {
   return bounds;
 }
 
+/** The 30 s of audio Whisper reads to tell the language: from the first speech. */
+function languageSample(audio: Float32Array): Float32Array {
+  const win = SAMPLE_RATE;
+  let from = 0;
+  while (from + win < audio.length && rms(audio, from, from + win) < SILENCE_RMS) from += win;
+  return audio.subarray(from, Math.min(audio.length, from + 30 * SAMPLE_RATE));
+}
+
+/**
+ * The spoken language, as a Whisper code ("fr", "ja", ...), or null when the
+ * model only speaks English.
+ *
+ * transformers.js does not detect the language: without one it decodes every
+ * recording as English, which translates or garbles anything else. So do
+ * what Whisper does: run the decoder one step from <|startoftranscript|> and
+ * take the most likely language token.
+ */
+async function detectLanguage(asr: Asr, audio: Float32Array): Promise<string | null> {
+  const config = asr.model.generation_config;
+  const langToId = config.lang_to_id;
+  if (!langToId || config.is_multilingual === false) return null;
+  const { input_features } = await asr.processor(languageSample(audio));
+  const start = new Tensor('int64', BigInt64Array.from([BigInt(config.decoder_start_token_id)]), [1, 1]);
+  const { logits } = await asr.model({ input_features, decoder_input_ids: start });
+  const data = logits.data as Float32Array;
+  const vocab = logits.dims[logits.dims.length - 1];
+  const last = data.length - vocab;
+  let best: string | null = null;
+  let bestLogit = -Infinity;
+  for (const [token, id] of Object.entries(langToId)) {
+    if (data[last + id] > bestLogit) {
+      bestLogit = data[last + id];
+      best = token;
+    }
+  }
+  // "<|fr|>" -> "fr"
+  return best ? best.slice(2, -2) : null;
+}
+
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   try {
     const { audio, model = 'fast' } = e.data;
     const asr = await loadModel(model);
     const bounds = segmentBounds(audio);
     const words: { text: string; start: number; end: number }[] = [];
+    // Once per recording, so every segment is transcribed in the same language.
+    const language = await detectLanguage(asr, audio);
 
     for (let i = 0; i < bounds.length - 1; i++) {
       const piece = audio.subarray(bounds[i], bounds[i + 1]);
@@ -140,12 +187,12 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
           return_timestamps: 'word',
           chunk_length_s: 30,
           stride_length_s: 5,
+          ...(language ? { language, task: 'transcribe' } : {}),
         });
-        for (const c of out.chunks ?? []) {
-          const [s, end] = c.timestamp;
-          if (typeof s !== 'number') continue;
-          words.push({ text: c.text, start: offset + s, end: offset + (end ?? s + 0.3) });
-        }
+        const raw = (out.chunks ?? [])
+          .filter((c) => typeof c.timestamp[0] === 'number')
+          .map((c) => ({ text: c.text, start: c.timestamp[0], end: c.timestamp[1] ?? c.timestamp[0] + 0.3 }));
+        for (const w of cleanWords(raw, out.text)) words.push({ text: w.text, start: offset + w.start, end: offset + w.end });
       }
       post({ type: 'progress', fraction: (i + 1) / (bounds.length - 1) });
     }
