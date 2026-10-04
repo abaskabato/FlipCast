@@ -173,6 +173,7 @@ export function isEngineLoaded(): boolean {
 export async function disposeEngine(): Promise<void> {
   const current = instance;
   instance = null;
+  loadedSource = null;
   if (!current) return;
   try {
     current.terminate();
@@ -205,6 +206,26 @@ function baseName(name: string): string {
  */
 async function readFileBytes(file: File): Promise<Uint8Array> {
   return new Uint8Array(await file.arrayBuffer());
+}
+
+/**
+ * The source currently held in the engine's memory. Copying a large video in
+ * is slow and allocates its size again each time, so a batch of clips, or
+ * clip finding followed by rendering, reuses the copy while the file and the
+ * engine instance are the same. WASM memory never shrinks once grown, so
+ * keeping it costs nothing extra; a new file replaces it.
+ */
+let loadedSource: { ffmpeg: FFmpegInstance; file: File; name: string } | null = null;
+
+/** The source's name inside the engine, copying it in only when needed. */
+async function ensureSource(ffmpeg: FFmpegInstance, file: File): Promise<string> {
+  if (loadedSource && loadedSource.ffmpeg === ffmpeg && loadedSource.file === file) return loadedSource.name;
+  if (loadedSource?.ffmpeg === ffmpeg) await ffmpeg.deleteFile(loadedSource.name).catch(() => undefined);
+  loadedSource = null;
+  const name = `in-${Date.now()}.${extensionFor(file.name)}`;
+  await ffmpeg.writeFile(name, await readFileBytes(file));
+  loadedSource = { ffmpeg, file, name };
+  return name;
 }
 
 /** What the render engine knows about the source, from probe.ts. */
@@ -335,7 +356,6 @@ async function renderOnce(
   const ffmpeg = await getFFmpeg(opts.onLog);
   const startedAt = performance.now();
 
-  const srcName = `in-${Date.now()}.${extensionFor(file.name)}`;
   // Captions are drawn into the picture and a trim changes the timeline, so
   // either way an output is never a copy.
   const plan = planRender(ratios, opts.source, { forceEncode: Boolean(opts.captions || opts.trim) });
@@ -366,9 +386,10 @@ async function renderOnce(
   opts.signal?.addEventListener('abort', onAbort, { once: true });
 
   const outputs: RenderedOutput[] = [];
+  let srcName = '';
   try {
     opts.onProgress?.({ progress: 0.02, label: 'Reading video into memory…' });
-    await ffmpeg.writeFile(srcName, await readFileBytes(file));
+    srcName = await ensureSource(ffmpeg, file);
     if (opts.signal?.aborted) throw new RenderAbortedError();
 
     if (opts.track && opts.source) {
@@ -486,7 +507,8 @@ async function renderOnce(
     throw e;
   } finally {
     opts.signal?.removeEventListener('abort', onAbort);
-    for (const name of [srcName, ...plan.flatMap((p) => (p.subtitles ? [p.subtitles] : []))]) {
+    // The source stays loaded for the next render (see ensureSource).
+    for (const name of plan.flatMap((p) => (p.subtitles ? [p.subtitles] : []))) {
       try {
         await ffmpeg.deleteFile(name);
       } catch {
@@ -522,13 +544,9 @@ export async function transcribeSource(
   onProgress?: (fraction: number, label: string) => void,
 ): Promise<CaptionWord[] | null> {
   const ffmpeg = await getFFmpeg();
-  const srcName = `tx-${Date.now()}.${extensionFor(file.name)}`;
-  await ffmpeg.writeFile(srcName, await readFileBytes(file));
-  try {
-    return await captionWords(ffmpeg, srcName, { transcribe }, onProgress ?? (() => undefined));
-  } finally {
-    await ffmpeg.deleteFile(srcName).catch(() => undefined);
-  }
+  // Loaded once: rendering clips from this file afterwards reuses it.
+  const srcName = await ensureSource(ffmpeg, file);
+  return captionWords(ffmpeg, srcName, { transcribe }, onProgress ?? (() => undefined));
 }
 
 /**
