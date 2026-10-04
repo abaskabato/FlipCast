@@ -31,6 +31,11 @@ export default function PrivacyPage() {
           </li>
           <li>Usage: seconds of video rendered this month, to enforce plan limits.</li>
           <li>
+            How you found us: when you sign up, the tag on the link you first arrived from (such as
+            ?ref=tiktok) and the referring website&apos;s domain, never the full address. It is kept
+            in your browser until then, and tells us which channels are worth our time.
+          </li>
+          <li>
             Billing: your plan and Stripe customer ID. Card details go directly to Stripe and
             never touch our servers.
           </li>

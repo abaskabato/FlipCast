@@ -34,6 +34,11 @@ export const user = pgTable('user', {
    * single source of truth; set explicitly for bespoke/promo grants.
    */
   maxUsageLimit: integer('max_usage_limit'),
+
+  // Where the account came from, recorded once just after sign-up: the link's
+  // tag (?ref= or ?utm_source=, e.g. "tiktok") and the referring site's host.
+  signupSource: text('signup_source'),
+  signupReferrer: text('signup_referrer'),
 });
 
 export const session = pgTable('session', {

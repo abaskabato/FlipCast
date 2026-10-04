@@ -22,6 +22,13 @@
       "when": 1791037573287,
       "tag": "0002_social_publishing",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791126274944,
+      "tag": "0003_signup_source",
+      "breakpoints": true
     }
   ]
 }

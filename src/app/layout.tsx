@@ -5,6 +5,8 @@ import { Bricolage_Grotesque, DM_Sans } from 'next/font/google';
 // is processed in the same PostCSS pass as the @tailwind directives it needs.
 import './globals.css';
 
+import { SourceCapture } from '@/components/flipcast/source-capture';
+
 // Self-hosted by next/font, so they satisfy the site's COEP require-corp header.
 const sans = DM_Sans({ subsets: ['latin'], variable: '--font-sans', display: 'swap' });
 const display = Bricolage_Grotesque({
@@ -45,7 +47,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning className={`${sans.variable} ${display.variable}`}>
-      <body className="min-h-screen font-sans text-zinc-50 antialiased">{children}</body>
+      <body className="min-h-screen font-sans text-zinc-50 antialiased">
+        {children}
+        <SourceCapture />
+      </body>
     </html>
   );
 }

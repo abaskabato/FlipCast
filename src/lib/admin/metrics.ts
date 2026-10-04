@@ -26,12 +26,14 @@ export type Metrics = {
   tiers: { tier: string; users: number }[];
   tracking: { mode: string; renders: number }[];
   failures: { at: Date; error: string | null; mode: string; seconds: number | null; size: string | null }[];
+  /** Sign-ups in the last 30 days by where they came from, and how many rendered. */
+  sources: { source: string; referrer: string | null; users: number; activated: number }[];
 };
 
 const num = (v: unknown) => Number(v ?? 0);
 
 export async function getMetrics(): Promise<Metrics> {
-  const [totals, retention, daily, tiers, tracking, failures] = await Promise.all([
+  const [totals, retention, daily, tiers, tracking, failures, sources] = await Promise.all([
     pool.query(`
       select
         (select count(*) from "user") as users,
@@ -70,6 +72,17 @@ export async function getMetrics(): Promise<Metrics> {
       select created_at as at, error, tracking_mode as mode, source_duration_seconds as seconds,
              case when source_width is not null then source_width || '×' || source_height end as size
       from video_jobs where status = 'failed' order by created_at desc limit 15`),
+    pool.query(`
+      select
+        coalesce(u.signup_source, 'not recorded') as source,
+        u.signup_referrer as referrer,
+        count(*) as users,
+        count(*) filter (where exists (select 1 from video_jobs j where j.user_id = u.id and j.status = 'completed')) as activated
+      from "user" u
+      where u.created_at > now() - interval '30 days'
+      group by 1, 2
+      order by 3 desc
+      limit 30`),
   ]);
   const t = totals.rows[0];
   return {
@@ -87,5 +100,6 @@ export async function getMetrics(): Promise<Metrics> {
     tiers: tiers.rows.map((r) => ({ tier: r.tier, users: num(r.users) })),
     tracking: tracking.rows.map((r) => ({ mode: r.mode, renders: num(r.renders) })),
     failures: failures.rows.map((r) => ({ at: r.at, error: r.error, mode: r.mode, seconds: r.seconds === null ? null : num(r.seconds), size: r.size })),
+    sources: sources.rows.map((r) => ({ source: r.source, referrer: r.referrer, users: num(r.users), activated: num(r.activated) })),
   };
 }

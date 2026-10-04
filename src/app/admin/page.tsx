@@ -90,6 +90,41 @@ export default async function AdminPage() {
           </table>
         </section>
 
+        <section className="fc-card mt-6 overflow-x-auto p-5">
+          <h2 className="fc-heading">Sign-ups by source · last 30 days</h2>
+          <p className="fc-meta mt-1">
+            Tag your links, e.g. flipcast.dev/?ref=tiktok. Untagged visits show as &quot;direct&quot; (with the
+            referring site when there is one).
+          </p>
+          {m.sources.length === 0 ? (
+            <p className="fc-body mt-2">No sign-ups in the last 30 days.</p>
+          ) : (
+            <table className="mt-3 w-full min-w-[420px] text-left text-sm">
+              <thead className="fc-meta">
+                <tr>
+                  <th className="py-1.5 font-medium">Source</th>
+                  <th className="py-1.5 text-right font-medium">Sign-ups</th>
+                  <th className="py-1.5 text-right font-medium">Rendered</th>
+                </tr>
+              </thead>
+              <tbody className="text-zinc-200">
+                {m.sources.map((s) => (
+                  <tr key={`${s.source}|${s.referrer}`} className="border-t border-white/[0.06]">
+                    <td className="py-1.5">
+                      {s.source}
+                      {s.referrer && <span className="fc-meta"> · via {s.referrer}</span>}
+                    </td>
+                    <td className="py-1.5 text-right">{s.users}</td>
+                    <td className="py-1.5 text-right">
+                      {s.activated} <span className="fc-meta">({pct(s.activated, s.users)})</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+
         <section className="fc-card mt-6 p-5">
           <h2 className="fc-heading">Recent render failures</h2>
           {m.failures.length === 0 ? (
