@@ -126,8 +126,9 @@ const size = (f: YtFormat) => f.filesize ?? f.filesize_approx ?? null;
  * browser and the render engine decode; YouTube otherwise prefers AV1) at up
  * to 720p, and AAC audio.
  */
-export async function lookUpVideo(id: string): Promise<YouTubeVideo> {
-  const json = JSON.parse(await runYtDlp(['-J', '--skip-download', `https://www.youtube.com/watch?v=${id}`])) as {
+export async function lookUpVideo(id: string, opts: { playerClient?: string } = {}): Promise<YouTubeVideo> {
+  const client = opts.playerClient ? ['--extractor-args', `youtube:player_client=${opts.playerClient}`] : [];
+  const json = JSON.parse(await runYtDlp([...client, '-J', '--skip-download', `https://www.youtube.com/watch?v=${id}`])) as {
     title?: string;
     duration?: number;
     live_status?: string;
