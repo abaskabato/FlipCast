@@ -73,7 +73,6 @@ tracking, layout, captions, clips, render), plus `verify:billing`,
 - Files are processed in the browser, up to 400 MB; a long episode in 1080p
   can be bigger, and transcribing it takes a while on a slow machine.
 - Auto-track needs a video the browser can decode; otherwise it centres.
-- A batch reads the whole source once per clip, so long sources batch slowly.
 - No direct YouTube import: YouTube blocks downloads from Vercel's servers, so
   a pasted YouTube link guides the owner to YouTube Studio's Download (see Next).
 
@@ -88,7 +87,6 @@ tracking, layout, captions, clips, render), plus `verify:billing`,
 2. **Daily posting** for Flipcast's own accounts through Buffer's MCP server.
 3. **Brand kit**: saved logo overlay, caption colours and font (a reason to pay).
 4. **Faster rendering** with WebCodecs (hardware encoding).
-5. **Batch speed**: load the source into the engine once per batch.
-6. **Re-download past renders** (today history keeps metadata only).
-7. **Oracle server** (deferred): only if YouTube import or long renders need a
+5. **Re-download past renders** (today history keeps metadata only).
+6. **Oracle server** (deferred): only if YouTube import or long renders need a
    server. Free ARM capacity was unavailable last time.
