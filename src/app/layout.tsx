@@ -5,6 +5,7 @@ import { Bricolage_Grotesque, DM_Sans } from 'next/font/google';
 // is processed in the same PostCSS pass as the @tailwind directives it needs.
 import './globals.css';
 
+import { ErrorReporter } from '@/components/flipcast/error-reporter';
 import { SourceCapture } from '@/components/flipcast/source-capture';
 
 // Self-hosted by next/font, so they satisfy the site's COEP require-corp header.
@@ -50,6 +51,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen font-sans text-zinc-50 antialiased">
         {children}
         <SourceCapture />
+        <ErrorReporter />
       </body>
     </html>
   );

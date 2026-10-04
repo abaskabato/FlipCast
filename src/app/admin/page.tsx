@@ -126,6 +126,27 @@ export default async function AdminPage() {
         </section>
 
         <section className="fc-card mt-6 p-5">
+          <h2 className="fc-heading">Errors on users&apos; devices · last 7 days</h2>
+          <p className="fc-meta mt-1">Problems people hit outside a render: unreadable videos, Auto-track, captions, clip finding, crashes.</p>
+          {m.deviceErrors.length === 0 ? (
+            <p className="fc-body mt-2">None reported.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {m.deviceErrors.map((e, i) => (
+                <li key={i} className="rounded-2xl border border-white/[0.06] p-3 text-sm">
+                  <p className="fc-meta font-mono">
+                    {e.kind} · {e.count}× · {e.users} signed-in {e.users === 1 ? 'user' : 'users'} · last{' '}
+                    {e.lastSeen.toISOString().replace('T', ' ').slice(0, 16)}
+                  </p>
+                  <p className="mt-1 break-words text-zinc-200">{e.message}</p>
+                  {e.browser && <p className="fc-meta mt-1 truncate">{e.browser}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="fc-card mt-6 p-5">
           <h2 className="fc-heading">Recent render failures</h2>
           {m.failures.length === 0 ? (
             <p className="fc-body mt-2">None recorded.</p>

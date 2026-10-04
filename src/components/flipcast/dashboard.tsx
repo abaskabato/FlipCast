@@ -42,6 +42,7 @@ import { importFromLink } from '@/lib/import/client';
 import { useFeatures } from '@/lib/features-client';
 import { CLIP_LENGTHS, toLines, type ClipLength, type ClipSuggestion } from '@/lib/clips/lines';
 import { findClipsLocally } from '@/lib/clips/local';
+import { reportError } from '@/lib/report-error';
 import type { CaptionWord } from '@/lib/captions/captions';
 import { isWholeClip, planSplitSegments, type SplitSegment } from '@/lib/video/layout';
 import { CAPTION_STYLES, type CaptionStyleId } from '@/lib/captions/captions';
@@ -354,6 +355,7 @@ export default function FlipcastDashboard() {
           );
         }
       } catch (e) {
+        reportError('probe', e);
         setFile(null);
         setMeta(null);
         setError(e instanceof Error ? e.message : 'Could not read that video.');
@@ -468,6 +470,7 @@ export default function FlipcastDashboard() {
           }
         } catch (e) {
           if (controller.signal.aborted) throw new RenderAbortedError();
+          reportError('tracking', e);
           notes.push(
             e instanceof TrackingUnavailableError
               ? `${e.message} It was framed from the centre instead.`
@@ -733,6 +736,7 @@ export default function FlipcastDashboard() {
       setSuggestions(findClipsLocally(lines, clipLength));
       setClipSource('device');
     } catch (e) {
+      reportError('clips', e);
       setClipError(e instanceof Error ? e.message : 'Could not find clips right now.');
     } finally {
       setClipPhase(null);

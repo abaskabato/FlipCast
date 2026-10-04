@@ -29,6 +29,13 @@
       "when": 1791126274944,
       "tag": "0003_signup_source",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791126727814,
+      "tag": "0004_client_errors",
+      "breakpoints": true
     }
   ]
 }

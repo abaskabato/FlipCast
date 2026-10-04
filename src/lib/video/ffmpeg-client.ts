@@ -18,6 +18,7 @@
 import { loadFFmpegClass, type FFmpegInstance } from './ffmpeg-loader';
 import { filterExpr, outputCanvas, type Focus, type Ratio } from './geometry';
 import { fetchAsset, withCdnFallback } from '../asset-cdn';
+import { reportError } from '../report-error';
 import { focusTrackFor, type FocusTrack, type SubjectPath } from './tracking';
 import { splitFilter, type SplitSegment } from './layout';
 import {
@@ -398,6 +399,7 @@ async function renderOnce(
         // Captions are an extra: a failed model download or transcription
         // must not cost the user the render itself.
         console.warn('[captions] failed:', e);
+        reportError('captions', e);
         notes.push(
           'Captions could not be made this time (the speech model did not load), so the video was rendered without them. Try again in a moment.',
         );
@@ -417,6 +419,7 @@ async function renderOnce(
         } catch (e) {
           // A missing face costs some glyphs, not the render.
           console.warn('[captions] font failed:', e);
+          reportError('captions', e);
           notes.push('The caption font for this language could not be loaded, so some characters may not show.');
         }
         for (const [i, item] of plan.entries()) {

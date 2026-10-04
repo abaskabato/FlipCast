@@ -28,12 +28,14 @@ export type Metrics = {
   failures: { at: Date; error: string | null; mode: string; seconds: number | null; size: string | null }[];
   /** Sign-ups in the last 30 days by where they came from, and how many rendered. */
   sources: { source: string; referrer: string | null; users: number; activated: number }[];
+  /** Errors from users' browsers in the last 7 days, grouped by message. */
+  deviceErrors: { kind: string; message: string; count: number; users: number; lastSeen: Date; browser: string | null }[];
 };
 
 const num = (v: unknown) => Number(v ?? 0);
 
 export async function getMetrics(): Promise<Metrics> {
-  const [totals, retention, daily, tiers, tracking, failures, sources] = await Promise.all([
+  const [totals, retention, daily, tiers, tracking, failures, sources, deviceErrors] = await Promise.all([
     pool.query(`
       select
         (select count(*) from "user") as users,
@@ -83,6 +85,14 @@ export async function getMetrics(): Promise<Metrics> {
       group by 1, 2
       order by 3 desc
       limit 30`),
+    pool.query(`
+      select kind, message, count(*) as count, count(distinct user_id) as users, max(created_at) as last_seen,
+             (array_agg(user_agent order by created_at desc))[1] as browser
+      from client_errors
+      where created_at > now() - interval '7 days'
+      group by kind, message
+      order by count(*) desc, max(created_at) desc
+      limit 20`),
   ]);
   const t = totals.rows[0];
   return {
@@ -101,5 +111,6 @@ export async function getMetrics(): Promise<Metrics> {
     tracking: tracking.rows.map((r) => ({ mode: r.mode, renders: num(r.renders) })),
     failures: failures.rows.map((r) => ({ at: r.at, error: r.error, mode: r.mode, seconds: r.seconds === null ? null : num(r.seconds), size: r.size })),
     sources: sources.rows.map((r) => ({ source: r.source, referrer: r.referrer, users: num(r.users), activated: num(r.activated) })),
+    deviceErrors: deviceErrors.rows.map((r) => ({ kind: r.kind, message: r.message, count: num(r.count), users: num(r.users), lastSeen: r.last_seen, browser: r.browser })),
   };
 }

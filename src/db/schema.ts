@@ -268,3 +268,26 @@ export const scheduledPosts = pgTable(
     dueIdx: index('scheduled_posts_due_idx').on(t.status, t.scheduledAt),
   }),
 );
+
+/**
+ * Errors from users' browsers that never reach a render job: a video that
+ * cannot be read, Auto-track or captions failing, an uncaught exception. Shown
+ * on /admin; file names are removed before storing, and rows older than 30
+ * days are pruned (src/app/api/client-errors/route.ts).
+ */
+export const clientErrors = pgTable(
+  'client_errors',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+    kind: text('kind').notNull(),
+    message: text('message').notNull(),
+    stack: text('stack'),
+    path: text('path'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    createdIdx: index('client_errors_created_at_idx').on(t.createdAt),
+  }),
+);

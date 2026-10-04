@@ -36,6 +36,12 @@ export default function PrivacyPage() {
             in your browser until then, and tells us which channels are worth our time.
           </li>
           <li>
+            Error reports: when something fails in your browser (a video that cannot be read,
+            captions or tracking that could not run), the error message, your browser version and
+            the page, so we can fix it. File names are removed first, and reports are deleted
+            after 30 days.
+          </li>
+          <li>
             Billing: your plan and Stripe customer ID. Card details go directly to Stripe and
             never touch our servers.
           </li>
