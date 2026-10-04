@@ -14,6 +14,8 @@ const display = Bricolage_Grotesque({
 });
 
 export const metadata: Metadata = {
+  // Makes the social preview image URLs absolute (src/app/opengraph-image.png).
+  metadataBase: new URL('https://flipcast.dev'),
   title: 'Flipcast — Reframe one clip for every platform, in your browser',
   description:
     'Flipcast turns one horizontal master into platform-ready 9:16, 1:1 and 16:9 cuts. Rendering happens on your device, so your footage never leaves it.',
@@ -23,6 +25,14 @@ export const metadata: Metadata = {
     description:
       'Turn one horizontal clip into 9:16, 1:1 and 16:9 cuts. Rendered locally in your browser; your footage is never uploaded.',
     type: 'website',
+    siteName: 'Flipcast',
+    url: '/',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Flipcast — reframe once, publish everywhere',
+    description:
+      'Turn one horizontal clip into 9:16, 1:1 and 16:9 cuts. Rendered locally in your browser; your footage is never uploaded.',
   },
 };
 

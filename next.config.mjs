@@ -21,6 +21,13 @@ const nextConfig = {
           { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
         ],
       },
+      {
+        // The social preview image and icons are meant to be shown on other
+        // sites (link previews, bookmarks), so they may be loaded cross-origin.
+        // Listed after the rule above, so this value wins for these paths.
+        source: '/:file(opengraph-image.png|twitter-image.png|favicon.ico|icon.svg|apple-icon.png)',
+        headers: [{ key: 'Cross-Origin-Resource-Policy', value: 'cross-origin' }],
+      },
     ];
   },
 };
