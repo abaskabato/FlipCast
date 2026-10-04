@@ -21,3 +21,6 @@ storage/
 
 # Verification artefacts
 test-results/
+
+# yt-dlp, fetched and checksum-verified by scripts/fetch-ytdlp.mjs
+bin/

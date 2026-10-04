@@ -2,6 +2,12 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // YouTube import runs yt-dlp (fetched at build into bin/, see
+  // scripts/fetch-ytdlp.mjs); ship it with the routes that use it.
+  outputFileTracingIncludes: {
+    '/api/import/youtube/**': ['./bin/yt-dlp'],
+  },
+
   async headers() {
     return [
       {
