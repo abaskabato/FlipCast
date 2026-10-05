@@ -32,7 +32,7 @@ export const CDN_PACKAGES = {
  * The last commit that changed public/fonts, public/models or public/demo.
  * The repository is public, so jsDelivr serves those files at this commit.
  */
-export const REPO_ASSETS_COMMIT = '18a94e7ac44e07ef7a6af872ffa9c2156df4a4fa';
+export const REPO_ASSETS_COMMIT = 'e8025ab90f6681d3cf226c8a3f8ae0ec1c0edce0';
 const REPO = `https://cdn.jsdelivr.net/gh/abaskabato/FlipCast@${REPO_ASSETS_COMMIT}/public`;
 
 /** Local path prefix -> CDN prefix. Only files listed here leave the origin. */
