@@ -73,6 +73,9 @@ tracking, layout, captions, clips, render), plus `verify:billing`,
 - Files are processed in the browser, up to 400 MB; a long episode in 1080p
   can be bigger, and transcribing it takes a while on a slow machine.
 - Auto-track needs a video the browser can decode; otherwise it centres.
+- Split screen can switch on for a single speaker when a second face-like
+  shape is on screen (seen on a NASA explainer with B-roll and a name
+  graphic): the detector should require two faces held over several samples.
 - No direct YouTube import: YouTube blocks downloads from Vercel's servers, so
   a pasted YouTube link guides the owner to YouTube Studio's Download (see Next).
 
