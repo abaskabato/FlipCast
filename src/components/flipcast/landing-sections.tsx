@@ -2,10 +2,8 @@ import Link from 'next/link';
 import {
   Captions,
   Check,
-  Layers,
   ScanFace,
   Send,
-  ShieldCheck,
   Sparkles,
   Upload,
   X,
@@ -17,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import type { Features } from '@/lib/features-client';
+import { FeatureRows, UseCases } from './landing-showcase';
 import { BROWSER_MAX_INPUT_BYTES, formatQuota, MAX_SOURCE_SECONDS, TIER_LIMITS } from '@/lib/quotas';
 
 type Item = { icon: typeof Upload; title: string; body: string };
@@ -48,21 +47,16 @@ function steps(f: Features): Item[] {
   ];
 }
 
-/** Feature cards; the optional ones appear only once switched on. */
+/** Extras shown as chips under the feature rows; publishing only once switched on. */
 function features(f: Features): Item[] {
   return [
-    f.clips
-      ? { icon: Wand2, title: 'AI finds the best clips', body: 'Drop in a podcast or long video and get stand-alone moments, titled and ranked. Your video stays on your device; only the transcript is analysed.' }
-      : { icon: Wand2, title: 'Finds the best clips', body: 'Drop in a podcast or long video and get stand-alone moments, titled and ranked by their hook and how cleanly they end. Found on your device, so nothing is uploaded.' },
-    { icon: ScanFace, title: 'Auto-track', body: 'Face detection finds the speaker in every shot and glides the crop with them, with no jitter.' },
-    { icon: Rows2, title: 'Split screen for podcasts', body: 'Two people on camera? The vertical cut stacks both speakers while they are on screen together, and switches back when it cuts to one.' },
-    { icon: Captions, title: 'Captions in any language', body: 'Word-by-word captions in dozens of languages and every script, from Hindi to Japanese to Arabic. Five styles, plus an .srt file.' },
-    { icon: Layers, title: 'Every format in one pass', body: 'Vertical, square and widescreen from a single render, sized to the detail your source has.' },
-    { icon: Link2, title: 'Import from a link', body: 'Paste a Dropbox, Google Drive or direct video link instead of downloading and re-uploading.' },
+    { icon: ScanFace, title: 'Auto-track follows the speaker', body: 'Face detection finds the speaker in every shot and glides the crop with them, with no jitter.' },
+    { icon: Rows2, title: 'Split screen for two-person shots', body: 'The vertical cut stacks both speakers while they are on screen together, and switches back when it cuts to one.' },
+    { icon: Link2, title: 'Import from Dropbox or Drive', body: 'Paste a Dropbox, Google Drive or direct video link instead of downloading and re-uploading.' },
     ...(f.youtube || f.tiktok
-      ? [{ icon: CalendarClock, title: 'Publish and schedule', body: `Post straight to ${[f.youtube && 'YouTube', f.tiktok && 'TikTok'].filter(Boolean).join(' and ')}, now or at the time your audience is online.` }]
+      ? [{ icon: CalendarClock, title: 'Publish and schedule', body: `Post straight to ${[f.youtube && 'YouTube', f.tiktok && 'TikTok'].filter(Boolean).join(' and ')}, now or later.` }]
       : []),
-    { icon: ShieldCheck, title: 'Private, no watermark', body: 'Rendering runs in your browser, so footage never touches a server. No watermark on any plan, including Free.' },
+    { icon: Captions, title: '.srt file with every render', body: 'Upload the captions file to YouTube or LinkedIn alongside the video.' },
   ];
 }
 
@@ -124,20 +118,21 @@ export default function LandingSections({ onStart, features: live }: { onStart: 
         </ol>
       </section>
 
-      <section aria-labelledby="features">
-        <h2 id="features" className="fc-display text-center text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-          Everything a repurposing tool should do. <span className="fc-gradient-text">Nothing it shouldn’t.</span>
-        </h2>
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <FeatureRows live={live} />
+
+      {/* The rest, in brief. */}
+      <section aria-label="Also included" className="-mt-8">
+        <div className="flex flex-wrap justify-center gap-2">
           {FEATURES.map((f) => (
-            <div key={f.title} className="fc-card p-6 transition-colors hover:border-pink-400/30">
-              <f.icon className="h-6 w-6 text-pink-400" />
-              <h3 className="fc-heading mt-3">{f.title}</h3>
-              <p className="fc-body mt-1.5">{f.body}</p>
-            </div>
+            <span key={f.title} className="inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-sm text-zinc-300" title={f.body}>
+              <f.icon className="h-4 w-4 text-pink-400" />
+              {f.title}
+            </span>
           ))}
         </div>
       </section>
+
+      <UseCases />
 
       <section aria-labelledby="compare" className="mx-auto max-w-3xl">
         <h2 id="compare" className="fc-display text-center text-3xl font-extrabold tracking-tight text-white sm:text-4xl">

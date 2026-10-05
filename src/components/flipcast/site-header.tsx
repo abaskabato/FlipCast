@@ -138,7 +138,17 @@ export function SiteHeader({ onSignIn }: { onSignIn?: () => void }) {
   return (
     <header className="flex items-center justify-between gap-4">
       <Logo />
-      <nav className="flex items-center gap-1 sm:gap-2">
+      <nav className="flex items-center gap-1 sm:gap-2" aria-label="Main">
+        {/* Section links on wider screens; phones keep the header to the essentials. */}
+        <Link href="/#features" className="fc-btn-ghost hidden !text-sm md:inline-flex">
+          Features
+        </Link>
+        <Link href="/#use-cases" className="fc-btn-ghost hidden !text-sm md:inline-flex">
+          Use cases
+        </Link>
+        <Link href="/opus-clip-alternative" className="fc-btn-ghost hidden !text-sm lg:inline-flex">
+          vs Opus Clip
+        </Link>
         <Link href="/pricing" className="fc-btn-ghost !text-sm">
           Pricing
         </Link>

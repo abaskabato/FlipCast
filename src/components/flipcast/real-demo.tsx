@@ -30,7 +30,7 @@ const TWO_CREDIT = 'https://www.pexels.com/video/a-man-interviewing-a-woman-6878
  * A demo clip and its poster from the CDN, switching to this site's copies if
  * the CDN copy fails to load (src/lib/asset-cdn.ts).
  */
-function demoMedia(base: string) {
+export function demoMedia(base: string) {
   return {
     src: preferCdn(`${base}.mp4`),
     poster: preferCdn(`${base}.jpg`),

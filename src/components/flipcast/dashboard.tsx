@@ -32,6 +32,8 @@ import { useSession } from '@/lib/auth-client';
 import { AuthPanel } from './auth-panel';
 import { CaptionEditor } from './caption-editor';
 import FocusPicker from './focus-picker';
+import { ClipGallery } from './clip-gallery';
+import { TrustBand } from './landing-showcase';
 import ShareActions from './share-actions';
 import {
   renderToRatios,
@@ -889,7 +891,7 @@ export default function FlipcastDashboard() {
           <div>
             <p className="fc-chip-accent">
               <Sparkles className="h-3.5 w-3.5" />
-              New: Dropbox &amp; Drive links · any-language captions
+              New: render all your clips at once · fix caption words
             </p>
             <h1 className="fc-display mt-5 max-w-xl text-5xl font-extrabold leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-7xl">
               One clip in.{' '}
@@ -978,7 +980,9 @@ export default function FlipcastDashboard() {
         </div>
       )}
 
+      {!sessionPending && !signedIn && <TrustBand />}
       {!sessionPending && !signedIn && <RealDemo onSample={() => void loadSample()} />}
+      {!sessionPending && !signedIn && <ClipGallery />}
 
       {!sessionPending && !signedIn && <LiveDemo onStart={startFromCta} />}
 
