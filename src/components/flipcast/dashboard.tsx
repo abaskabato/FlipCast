@@ -170,8 +170,8 @@ function StepHeading({ n, children, aside }: { n: number; children: React.ReactN
 const MAX_FILE_BYTES = BROWSER_MAX_INPUT_BYTES;
 
 /** The demo clip from the landing page (public/demo/CREDITS.txt). */
-const SAMPLE_URL = '/demo/podcast-source.mp4';
-const SAMPLE_NAME = 'sample-podcast.mp4';
+const SAMPLE_URL = '/demo/astro-source.mp4';
+const SAMPLE_NAME = 'sample-astronaut.mp4';
 
 /** sessionStorage key carrying a plan picked on /pricing across sign-in. */
 const CHECKOUT_INTENT_KEY = 'flipcast:checkout-intent';

@@ -16,9 +16,11 @@ import { preferCdn } from '@/lib/asset-cdn';
  * the same two speakers.
  */
 
-const SRC = '/demo/podcast-source';
-const CENTRE = '/demo/podcast-centre';
-const TRACKED = '/demo/podcast-tracked';
+const SRC = '/demo/astro-source';
+const CENTRE = '/demo/astro-centre';
+const TRACKED = '/demo/astro-tracked';
+const SRC_CREDIT =
+  'https://commons.wikimedia.org/wiki/File:NASA_Astronaut_Discusses_Life_In_Space_With_KKTV-TV_%E2%80%93_July_8,_2025_(iss073m261891714).webm';
 
 const TWO_SRC = '/demo/twoshot-source';
 const TWO_CENTRE = '/demo/twoshot-centre';
@@ -184,8 +186,8 @@ export default function RealDemo({ onSample }: { onSample: () => void }) {
           Same clip. <span className="fc-gradient-text">Two very different Shorts.</span>
         </h2>
         <p className="fc-body mx-auto mt-2 max-w-xl">
-          The camera pans from one host to the other. A plain centre crop slices both of them in
-          half. Auto-track finds each face and frames it, even across the camera move.
+          She floats sideways mid-answer. A plain centre crop keeps her middle and loses her face.
+          Auto-track follows her face the whole way round.
         </p>
       </div>
 
@@ -209,15 +211,10 @@ export default function RealDemo({ onSample }: { onSample: () => void }) {
             </div>
             <figcaption className="fc-meta mt-2">
               Footage:{' '}
-              <a
-                href="https://www.pexels.com/video/podcast-interview-6878733/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-2 hover:text-zinc-300"
-              >
-                cottonbro studio via Pexels
-              </a>
-              . Outputs are unedited Flipcast renders.
+              <a href={SRC_CREDIT} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-zinc-300">
+                NASA
+              </a>{' '}
+              (public domain; NASA does not endorse Flipcast). Outputs are unedited Flipcast renders.
             </figcaption>
           </figure>
 

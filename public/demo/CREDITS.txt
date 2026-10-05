@@ -23,3 +23,9 @@ not endorse Flipcast), from Wikimedia Commons:
 Each source was cut to a two-minute stretch; every clip in showcase/ is an
 unedited Flipcast render of it (clip finding, Auto-track, captions), and each
 .jpg is a frame from its clip.
+
+astro-source.mp4 (the "Same clip. Two very different Shorts." comparison and
+the studio's sample clip): 12 s of "NASA Astronaut Discusses Life In Space
+With KKTV-TV – July 8, 2025" (iss073m261891714), NASA, public domain, via
+Wikimedia Commons; re-encoded to H.264. astro-centre.mp4 (centre crop) and
+astro-tracked.mp4 (Auto-track) are unedited Flipcast renders of the same 12 s.
