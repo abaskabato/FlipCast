@@ -14,7 +14,7 @@
  * Run: npm run verify:layout
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
@@ -140,6 +140,19 @@ try {
   check(plain(after), `3.2 s: back to the normal crop after it (${JSON.stringify(after)})`);
 } finally {
   rmSync(work, { recursive: true, force: true });
+}
+
+// ---- real detector output (scripts/fixtures, recorded in the browser) ----------
+{
+  const load = (n) => JSON.parse(readFileSync(path.join(import.meta.dirname, 'fixtures', `split-${n}.json`), 'utf8'));
+  // A NASA explainer: one speaker, plus a fixed object low in her shot and
+  // B-roll graphics the face detector mistook for two large faces.
+  const one = load('blackhole');
+  check(planSplitSegments(one.samples, one.w, one.h).length === 0, 'real footage: one speaker with a stray object and B-roll -> no split');
+  // The two-shot podcast demo: two seated people for the whole clip.
+  const two = load('twoshot-source');
+  const segs = planSplitSegments(two.samples, two.w, two.h);
+  check(segs.length === 1 && isWholeClip(segs), 'real footage: two seated people -> split for the whole clip');
 }
 
 console.log(failed ? `\nLAYOUT: ${failed} FAILED` : '\nLAYOUT: ALL PASS');

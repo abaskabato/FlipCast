@@ -36,6 +36,18 @@ export type SplitSegment = { start: number; end: number; layout: SplitLayout };
 const MIN_SIZE_RATIO = 0.45;
 /** Faces smaller than this (frame width fraction) are background, not speakers. */
 const MIN_FACE = 0.025;
+/**
+ * Faces wider than this (frame width fraction) are a close-up, or a false
+ * detection on graphics or B-roll; two people in a shot worth splitting are
+ * never this large.
+ */
+const MAX_FACE = 0.25;
+/**
+ * Two people on camera together have their faces at about the same height;
+ * a second "face" well above or below the first is an object, a poster or a
+ * graphic (frame height fraction).
+ */
+const MAX_HEIGHT_GAP = 0.15;
 /** Beyond this spread (frame fraction) a person is moving too much for a fixed panel. */
 const MAX_WANDER = 0.08;
 /** Shorter stretches together are not worth a layout change (seconds). */
@@ -63,6 +75,7 @@ function pairIn(s: SubjectSample, windowW: number): [SplitPanel, SplitPanel] | n
   if (faces.length < 2) return null;
   const [a, b] = faces;
   if (b.w < a.w * MIN_SIZE_RATIO) return null;
+  if (a.w > MAX_FACE || Math.abs(a.cy - b.cy) > MAX_HEIGHT_GAP) return null;
   const [l, r] = a.cx <= b.cx ? [a, b] : [b, a];
   // Only worth splitting when one 9:16 window cannot hold both faces.
   const span = r.cx + r.w / 2 - (l.cx - l.w / 2);
