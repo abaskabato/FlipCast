@@ -2,6 +2,11 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  async redirects() {
+    // A comparison page that has been removed; send old links home.
+    return [{ source: '/opus-clip-alternative', destination: '/', permanent: true }];
+  },
+
   async headers() {
     return [
       {

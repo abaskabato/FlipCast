@@ -10,7 +10,7 @@ offline once loaded, and cannot leak your source footage.
 
 ## Why browser-side rendering
 
-Opus Clip, Captions and Descript all upload to a cloud queue. That model needs
+Cloud clipping tools upload your video to a server queue. That model needs
 render compute, object storage, upload bandwidth and upload time before you see
 a single frame. We rejected it: a browser already has a full video encoder
 built in, and FFmpeg WASM removes every one of those dependencies.

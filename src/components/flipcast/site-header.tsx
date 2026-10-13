@@ -146,9 +146,6 @@ export function SiteHeader({ onSignIn }: { onSignIn?: () => void }) {
         <Link href="/#use-cases" className="fc-btn-ghost hidden !text-sm md:inline-flex">
           Use cases
         </Link>
-        <Link href="/opus-clip-alternative" className="fc-btn-ghost hidden !text-sm lg:inline-flex">
-          vs Opus Clip
-        </Link>
         <Link href="/pricing" className="fc-btn-ghost !text-sm">
           Pricing
         </Link>

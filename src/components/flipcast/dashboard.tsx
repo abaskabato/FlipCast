@@ -903,7 +903,7 @@ export default function FlipcastDashboard() {
                 : 'Drop in a long video and Flipcast finds the moments worth posting, then cuts them into captioned vertical, square and widescreen clips that keep every speaker in frame.'}{' '}
               Ready for TikTok, Reels, Shorts and YouTube{features.youtube || features.tiktok ? ', and posted or scheduled from here.' : ' in one pass.'}
             </p>
-            {/* The way in, the way Opus Clip and others lead: paste a link or upload. */}
+            {/* The way in: paste a link or upload. */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();

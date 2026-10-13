@@ -39,7 +39,7 @@ export default function PodcastClipMakerPage() {
         { title: 'Render and post', body: 'Get every clip in vertical, square and widescreen, with captions, ready to post or schedule.' },
       ]}
       faq={[
-        { q: 'Does it work with Riverside, Zoom or StreamYard recordings?', a: 'Yes, as long as you have the video file (MP4, MOV, WebM or MKV). Export or download the recording, then drop it in.' },
+        { q: 'Does it work with my podcast or meeting recordings?', a: 'Yes, as long as you have the video file (MP4, MOV, WebM or MKV). Export or download the recording, then drop it in.' },
         { q: 'What if the hosts are in separate frames?', a: 'Auto-track finds every face in the shot. When two people are on camera together, the vertical cut stacks them with split screen.' },
         { q: 'Which languages do captions support?', a: 'Dozens, detected automatically, including Spanish, Portuguese, French, German, Hindi, Arabic, Japanese, Korean and Chinese, each in a font made for its script.' },
         { q: 'Is my unreleased episode safe?', a: 'It never leaves your computer. Transcription, clip finding and rendering all run in your browser.' },

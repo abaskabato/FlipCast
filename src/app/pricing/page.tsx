@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 // Off on the live site until a live Stripe key is set; see billingEnabled().
 const paidPlansOpen = billingEnabled();
 
-/** Checked against Opus Clip's public pricing page, 2026-10. Kept unnamed so it ages well. */
+/** Typical limits of cloud clipping tools' entry plans, checked 2026-10. */
 const GAP: [feature: string, elsewhere: string][] = [
   ['Rendering many clips at once', 'From $29/mo'],
   ['Your video stays on your device', 'Uploaded to their servers'],

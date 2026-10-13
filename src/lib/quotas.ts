@@ -15,8 +15,8 @@ export type RatioId = (typeof RATIOS)[number];
  *
  * Rendering and transcription run on the user's device, so a minute costs us
  * almost nothing; these are set to beat cloud tools on minutes per dollar
- * (Opus Clip Starter: 150 min for $15; Creator here: 300 min for $12). Free
- * matches Opus Clip's free 60 min, but with no watermark and no expiry.
+ * (a typical cloud tool's starter plan: 150 min for $15; Creator here: 300 min
+ * for $12). Free is a generous 60 min, with no watermark and no expiry.
  */
 export const TIER_LIMITS: Record<string, number> = {
   free: 3600, // 60 minutes of source per month

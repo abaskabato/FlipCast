@@ -9,7 +9,7 @@ import { SiteHeader } from './site-header';
 export type CompareRow = { feature: string; us: string; them: string; usWins?: boolean };
 
 /**
- * Shared layout for search-landing pages ("Opus Clip alternative", "podcast
+ * Shared layout for search-landing pages (such as "podcast
  * clip maker"): a pitch, an honest comparison, when the other tool is the
  * better pick, and questions. Static, so it renders at build time.
  */
