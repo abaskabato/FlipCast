@@ -76,6 +76,19 @@ tracking, layout, captions, clips, render), plus `verify:billing`,
 - No direct YouTube import: YouTube blocks downloads from Vercel's servers, so
   a pasted YouTube link guides the owner to YouTube Studio's Download (see Next).
 
+## Accepted dependency advisories (2026-10-16)
+
+`npm audit` reports two that have no safe fix and never run on the live site:
+
+- **braces** (via Tailwind 3's file watcher): no patched release exists;
+  only used while building CSS. Goes away with Tailwind 4.
+- **esbuild 0.18** (inside drizzle-kit's loader): the advisory is about
+  esbuild's development server, which drizzle-kit never starts.
+
+PostCSS, postcss-selector-parser and source-map-js are pinned to patched
+versions through `overrides` in package.json (the compiled CSS was
+byte-identical before and after).
+
 ## Next
 
 1. **YouTube link import from a server**: YouTube blocks Vercel's servers
