@@ -20,7 +20,7 @@ const NEW_ACCOUNT_MS = 2 * 24 * 60 * 60 * 1000;
  * alone, so it cannot be rewritten later.
  */
 export async function POST(request: Request) {
-  if (!checkRateLimit(`source:${clientIp(request.headers)}`, 10, 60_000)) {
+  if (!(await checkRateLimit(`source:${clientIp(request.headers)}`, 10, 60_000))) {
     return NextResponse.json({ error: 'Rate limited' }, { status: 429 });
   }
   const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);

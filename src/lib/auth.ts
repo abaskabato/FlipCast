@@ -58,6 +58,9 @@ export const auth = betterAuth({
     enabled: true,
     window: 60,
     max: 60,
+    // Counts live in Postgres (table rate_limit), shared by every server
+    // instance; in memory each instance would keep its own, much looser limit.
+    storage: 'database',
   },
   user: {
     // Accounts are never email-verified (no mail provider yet), so a change

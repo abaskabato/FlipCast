@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Sign in to import from a link.' }, { status: 401 });
   }
   // A 400 MB file is 100 pieces; this allows a few imports a minute, no more.
-  if (!checkRateLimit(`import:${session.user.id}`, 240, 60_000)) {
+  if (!(await checkRateLimit(`import:${session.user.id}`, 240, 60_000))) {
     return NextResponse.json({ error: 'Too many imports at once. Try again in a minute.' }, { status: 429 });
   }
 

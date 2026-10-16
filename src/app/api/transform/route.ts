@@ -42,7 +42,7 @@ function fail(status: number, error: string, extra?: Record<string, unknown>) {
  */
 export async function POST(request: Request) {
   const ip = clientIp(request.headers);
-  if (!checkRateLimit(`transform:${ip}`, 20, 60_000)) {
+  if (!(await checkRateLimit(`transform:${ip}`, 20, 60_000))) {
     return fail(429, 'Too many requests. Try again in a moment.');
   }
 
@@ -158,7 +158,7 @@ export async function POST(request: Request) {
  */
 export async function PATCH(request: Request) {
   const ip = clientIp(request.headers);
-  if (!checkRateLimit(`transform-complete:${ip}`, 60, 60_000)) {
+  if (!(await checkRateLimit(`transform-complete:${ip}`, 60, 60_000))) {
     return fail(429, 'Too many requests.');
   }
 

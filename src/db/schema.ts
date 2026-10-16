@@ -4,6 +4,7 @@ import {
   timestamp,
   boolean,
   integer,
+  bigint,
   real,
   index,
   uniqueIndex,
@@ -291,3 +292,17 @@ export const clientErrors = pgTable(
     createdIdx: index('client_errors_created_at_idx').on(t.createdAt),
   }),
 );
+
+/**
+ * Request counters shared by every server instance, so a limit holds across
+ * all of them (memory counters reset per instance). Used by Better Auth for
+ * sign-in and sign-up limits (model "rateLimit") and by src/lib/rate-limit.ts
+ * for the app's own routes (keys prefixed "app:").
+ */
+export const rateLimit = pgTable('rate_limit', {
+  id: text('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  count: integer('count').notNull(),
+  /** Milliseconds since the epoch: Better Auth's last request, or the app window's start. */
+  lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
+});

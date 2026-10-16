@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
   const ip = clientIp(request.headers);
-  if (!checkRateLimit(`usage:${ip}`, 60, 60_000)) {
+  if (!(await checkRateLimit(`usage:${ip}`, 60, 60_000))) {
     return NextResponse.json({ error: 'Rate limited' }, { status: 429 });
   }
   const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);

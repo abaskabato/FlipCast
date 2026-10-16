@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Sign in to find clips.' }, { status: 401 });
   }
   // Each call is a paid model request.
-  if (!checkRateLimit(`clips:${session.user.id}`, 12, 60 * 60_000)) {
+  if (!(await checkRateLimit(`clips:${session.user.id}`, 12, 60 * 60_000))) {
     return NextResponse.json({ error: 'You have found clips many times this hour. Try again later.' }, { status: 429 });
   }
 

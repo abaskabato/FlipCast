@@ -20,7 +20,7 @@ const KEEP_DAYS = 30;
  * /admin. Works signed out too, since many failures happen before sign-in.
  */
 export async function POST(request: Request) {
-  if (!checkRateLimit(`client-errors:${clientIp(request.headers)}`, 30, 60_000)) {
+  if (!(await checkRateLimit(`client-errors:${clientIp(request.headers)}`, 30, 60_000))) {
     return new NextResponse(null, { status: 429 });
   }
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
