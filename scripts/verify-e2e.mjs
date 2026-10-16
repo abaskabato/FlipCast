@@ -147,12 +147,12 @@ try {
   });
   check('oversize clip rejected', big.status === 402 || big.status === 413, `${big.status} ${big.body?.error ?? ''}`.slice(0, 90));
 
-  // ---- 9. uploads endpoints are retired ----
+  // ---- 9. no server-side upload endpoint (rendering is in the browser) ----
   const up = await page.evaluate(async () => {
     const r = await fetch('/api/uploads/presign', { method: 'POST' });
     return r.status;
   });
-  check('upload endpoint retired (410)', up === 410, String(up));
+  check('no upload endpoint (404)', up === 404, String(up));
 
   // ---- 10. no client errors ----
   const realErrors = pageErrors.filter(

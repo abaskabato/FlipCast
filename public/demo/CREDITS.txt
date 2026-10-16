@@ -1,7 +1,7 @@
 Demo footage by cottonbro studio, via Pexels, used under the Pexels License
 (https://www.pexels.com/license/):
 
-- podcast-source.mp4: "Podcast Interview"
+- podcast-tracked.mp4 (gallery): an Auto-track render of "Podcast Interview"
   https://www.pexels.com/video/podcast-interview-6878733/
 - twoshot-source.mp4: "A Man Interviewing a Woman"
   https://www.pexels.com/video/a-man-interviewing-a-woman-6878737/

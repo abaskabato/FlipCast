@@ -31,8 +31,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
-    "@aws-sdk/client-s3": "^3.1141.0",
-    "@aws-sdk/s3-request-presigner": "^3.1141.0",
     "@better-auth/drizzle-adapter": "^1.7.6",
     "@daveyplate/better-auth-ui": "^3.4.0",
     "@ffmpeg/core": "^0.12.10",
