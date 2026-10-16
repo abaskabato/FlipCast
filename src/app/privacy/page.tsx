@@ -54,6 +54,11 @@ export default function PrivacyPage() {
           <li>Vercel — hosts the website and API.</li>
           <li>Neon — hosts the database.</li>
           <li>Stripe — handles payments, for paid plans only.</li>
+          <li>Resend — sends password-reset emails and receives email to our support address.</li>
+          <li>
+            jsDelivr — a public content network that serves the app&apos;s engine files, fonts and demo
+            clips, so it sees your IP address when they load. Your videos are never sent to it.
+          </li>
         </ul>
       </section>
 
